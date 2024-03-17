@@ -51,11 +51,11 @@ public:
     // 获取空闲Inode
     uint32_t get_free_inode() {
         // 从位图中找到第一个空闲的Inode
-        for (uint32_t i = 0; i < inode_count; i++) {
+        for (uint32_t i = 1; i < inode_count; i++) {
             if (!inode_bitmap.test(i)) {
                 inode_bitmap.set(i);
                 dirty_flag = 1;
-                return i + INODE_START_INDEX;
+                return i;
             }
         }
         // 如果没有空闲Inode

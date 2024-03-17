@@ -7,7 +7,7 @@
 std::vector<std::string> FileSystem::parse_path(const std::string &path) {
     std::vector<std::string> dirs;
     std::string dir;
-    for (char c : path) {
+    for (char c: path) {
         if (c == '/') {
             if (!dir.empty()) {
                 dirs.push_back(dir);
@@ -23,48 +23,24 @@ std::vector<std::string> FileSystem::parse_path(const std::string &path) {
     return dirs;
 }
 
-Inode *FileSystem::open_dir(const std::string &path) {
-    /*
-     * 把文件夹的DiskInode节点放到内存中来，返回这个Inode节点的指针
-     * 如果已经在内存Inode中了，快速检索返回。
-     * 如果不在内存Inode中，要先从磁盘中读到内存中来。
-     * 如果内存Inode没有空间了，
-     */
+Inode *FileSystem::get_inode_by_path(const std::string &path) {
+    auto _current_inode_id = current_inode_id;
 
-    // 暂且强制要求路径以 / 开头
-    if (path[0] != '/') {
-        throw std::runtime_error("Invalid path: " + path + ", path must start with /");
-    }
+    std::string file = path.substr(path.find_last_of('/') + 1);
+    std::string parent_path = path.substr(0, path.size() - file.size());
 
-    auto inode = allocate_memory_inode(1);
-    if (path == "/") {
-        return inode;
-    }
-
-    auto dirs = parse_path(path);
-    for (const auto &dir: dirs) {
-        // 在inode的所有目录里，找到名字是xxx的目录
-        bool found = false;
-        for (uint32_t i = 0; i < inode->get_directory_num(); i++) {
-            if (inode->file_type != FileType::DIRECTORY) {
-                throw std::runtime_error("Not a directory: " + path);
-            }
-
-            auto buffer = allocate_buffer_cache(get_block_pointer(inode, i / 16));
-            auto dir_entry = reinterpret_cast<DirectoryEntry *>(buffer->data + sizeof(DirectoryEntry) * (i % 16));
-            if (dir_entry->inode_id != 0 && dir_entry->name == dir) {
-                inode = allocate_memory_inode(dir_entry->inode_id);
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            std::stringstream ss;
-            ss << "Directory not found: " <<  dir << " in " << path;
-            throw std::runtime_error(ss.str());
+    cd(parent_path);
+    auto inode = allocate_memory_inode(current_inode_id);
+    for (uint32_t i = 0; i < inode->get_directory_num(); i++) {
+        auto dir_entry = get_directory_entry(inode, i);
+        if (dir_entry->inode_id != 0 && std::string(dir_entry->name) == file) {
+            current_inode_id = _current_inode_id;
+            return allocate_memory_inode(dir_entry->inode_id);
         }
     }
-    return inode;
+
+    current_inode_id = _current_inode_id;
+    throw std::runtime_error("File not found: " + path);
 }
 
 void FileSystem::format() {
@@ -79,7 +55,7 @@ void FileSystem::format() {
 
     // 清空打开文件表
     for (auto &open_file: open_files) {
-        open_file = nullptr;
+        open_file.clear();
     }
 
     // 初始化内存Inode
@@ -129,7 +105,7 @@ void FileSystem::format() {
     std::memcpy(super_block_data.data(), &super_block, sizeof(super_block));
     disk_manager.write_block(0, super_block_data);
 
-    current_path = "/";
+    current_inode_id = 1;
 }
 
 const uint32_t &FileSystem::get_block_pointer(Inode *pInode, uint32_t i) {
@@ -143,59 +119,58 @@ const uint32_t &FileSystem::get_block_pointer(Inode *pInode, uint32_t i) {
         // 一次间接索引
         uint32_t block_no = pInode->block_pointers[5 + (i - 5) / PTRS_PER_BLOCK];
         auto buffer = allocate_buffer_cache(block_no);
-        return *reinterpret_cast<uint32_t *>(buffer->data + sizeof(uint32_t) * ((i - 5) % PTRS_PER_BLOCK));
+        // return *reinterpret_cast<uint32_t *>(buffer->data + sizeof(uint32_t) * ((i - 5) % PTRS_PER_BLOCK));
+        return *buffer->read<uint32_t>((i - 5) % PTRS_PER_BLOCK);
     } else if (i < 5 + 2 * PTRS_PER_BLOCK + 2 * PTRS_PER_BLOCK * PTRS_PER_BLOCK) {
         // 二次间接索引
         i -= 5 + 2 * PTRS_PER_BLOCK;
         uint32_t block_no = pInode->block_pointers[7 + i / (PTRS_PER_BLOCK * PTRS_PER_BLOCK)];
         auto first_level_buffer = allocate_buffer_cache(block_no);
-        block_no = *reinterpret_cast<uint32_t *>(first_level_buffer->data + sizeof(uint32_t) * ((i / PTRS_PER_BLOCK) % PTRS_PER_BLOCK));
+        // block_no = *reinterpret_cast<uint32_t *>(first_level_buffer->data + sizeof(uint32_t) * ((i / PTRS_PER_BLOCK) % PTRS_PER_BLOCK));
+        block_no = *first_level_buffer->read<uint32_t>((i / PTRS_PER_BLOCK) % PTRS_PER_BLOCK);
         auto second_level_buffer = allocate_buffer_cache(block_no);
-        return *reinterpret_cast<uint32_t *>(second_level_buffer->data + sizeof(uint32_t) * (i % PTRS_PER_BLOCK));
+        // return *reinterpret_cast<uint32_t *>(second_level_buffer->data + sizeof(uint32_t) * (i % PTRS_PER_BLOCK));
+        return *second_level_buffer->read<uint32_t>(i % PTRS_PER_BLOCK);
     } else {
         // 三次间接索引
         i -= 5 + 2 * PTRS_PER_BLOCK + 2 * PTRS_PER_BLOCK * PTRS_PER_BLOCK;
         uint32_t block_no = pInode->block_pointers[9];
         auto first_level_buffer = allocate_buffer_cache(block_no);
-        block_no = *reinterpret_cast<uint32_t *>(first_level_buffer->data + sizeof(uint32_t) * ((i / (PTRS_PER_BLOCK * PTRS_PER_BLOCK)) % PTRS_PER_BLOCK));
+        // block_no = *reinterpret_cast<uint32_t *>(first_level_buffer->data + sizeof(uint32_t) * ((i / (PTRS_PER_BLOCK * PTRS_PER_BLOCK)) % PTRS_PER_BLOCK));
+        block_no = *first_level_buffer->read<uint32_t>((i / (PTRS_PER_BLOCK * PTRS_PER_BLOCK)) % PTRS_PER_BLOCK);
         auto second_level_buffer = allocate_buffer_cache(block_no);
-        block_no = *reinterpret_cast<uint32_t *>(second_level_buffer->data + sizeof(uint32_t) * ((i / PTRS_PER_BLOCK) % PTRS_PER_BLOCK));
+        // block_no = *reinterpret_cast<uint32_t *>(second_level_buffer->data + sizeof(uint32_t) * ((i / PTRS_PER_BLOCK) % PTRS_PER_BLOCK));
+        block_no = *second_level_buffer->read<uint32_t>((i / PTRS_PER_BLOCK) % PTRS_PER_BLOCK);
         auto third_level_buffer = allocate_buffer_cache(block_no);
-        return *reinterpret_cast<uint32_t *>(third_level_buffer->data + sizeof(uint32_t) * (i % PTRS_PER_BLOCK));
+        // return *reinterpret_cast<uint32_t *>(third_level_buffer->data + sizeof(uint32_t) * (i % PTRS_PER_BLOCK));
+        return *third_level_buffer->read<uint32_t>(i % PTRS_PER_BLOCK);
     }
 }
 
-DirectoryEntry *FileSystem::get_directory_entry(Inode *pInode, uint32_t i) {
+const DirectoryEntry *FileSystem::get_directory_entry(Inode *pInode, uint32_t i) {
     auto block_no = get_block_pointer(pInode, i / 16);
-    if (block_no < 60) {
+    if (block_no < BLOCK_START_INDEX) {
         // 未分配的内存空间
         throw std::runtime_error("Block not allocated: " + std::to_string(block_no));
     }
     auto buffer = allocate_buffer_cache(block_no);
-    auto dir_entry = reinterpret_cast<DirectoryEntry *>(buffer->data + sizeof(DirectoryEntry) * (i % 16));
-    // auto dir_entry = buffer->get_data<DirectoryEntry*>(i % 16);
+    // auto dir_entry = reinterpret_cast<DirectoryEntry *>(buffer->data + sizeof(DirectoryEntry) * (i % 16));
+    auto dir_entry = buffer->read<DirectoryEntry>(i % 16);
     return dir_entry;
 }
 
 FileSystem::~FileSystem() {
-    // 将内存Inode和高速缓存写回磁盘
-    for (auto &m_inode: m_inodes) {
-        write_back_inode(&m_inode);
-    }
-
-    for (auto &cache_block: buffer_cache) {
-        if (cache_block.is_dirty()) {
-            write_back_cache_block(&cache_block);
-        }
-    }
+    save();
 }
 
 void FileSystem::write_back_inode(Inode *pInode) {
     auto disk_inode = Inode::to_disk_inode(*pInode);
     auto [block_no, _num] = inode_id_to_block_no(pInode->inode_id);
     auto buffer = allocate_buffer_cache(block_no);
-    std::memcpy(buffer->data + sizeof(DiskInode) * _num, &disk_inode, sizeof(DiskInode));
-    buffer->dirty = true;
+    // std::memcpy(buffer->data + sizeof(DiskInode) * _num, &disk_inode, sizeof(DiskInode));
+    // buffer->dirty = true;
+    // buffer->write<DiskInode>(&disk_inode, _num);
+    write_buffer(buffer, &disk_inode, _num);
 }
 
 void FileSystem::alloc_new_block(Inode *inode) {
@@ -204,7 +179,7 @@ void FileSystem::alloc_new_block(Inode *inode) {
     // Inode 有一个 uint32_t block_pointers[10]
     // 直接索引
     for (int i = 0; i < 5; i++) {
-        if(inode->block_pointers[i] == 0) {
+        if (inode->block_pointers[i] == 0) {
             inode->block_pointers[i] = super_block.get_free_block();
             return;
         }
@@ -214,21 +189,22 @@ void FileSystem::alloc_new_block(Inode *inode) {
     for (int i = 5; i < 7; i++) {
         if (inode->block_pointers[i] == 0) {
             inode->block_pointers[i] = super_block.get_free_block();
-            auto buffer= allocate_buffer_cache(inode->block_pointers[i]);
-            // buffer->clear();
-            auto ptr = reinterpret_cast<uint32_t *>(buffer->data);
+            auto buffer = allocate_buffer_cache(inode->block_pointers[i]);
+            auto ptr = buffer->read<uint32_t>(0);
             for (int j = 0; j < PTRS_PER_BLOCK; j++) {
                 if (ptr[j] == 0) {
-                    ptr[j] = super_block.get_free_block();
+                    auto id = super_block.get_free_block();
+                    write_buffer(buffer, &id, j);
                     return;
                 }
             }
         } else {
             auto buffer = allocate_buffer_cache(inode->block_pointers[i]);
-            auto ptr = reinterpret_cast<uint32_t *>(buffer->data);
+            auto ptr = buffer->read<uint32_t>(0);
             for (int j = 0; j < PTRS_PER_BLOCK; j++) {
                 if (ptr[j] == 0) {
-                    ptr[j] = super_block.get_free_block();
+                    auto id = super_block.get_free_block();
+                    write_buffer(buffer, &id, j);
                     return;
                 }
             }
@@ -239,25 +215,24 @@ void FileSystem::alloc_new_block(Inode *inode) {
     for (int i = 7; i < 9; i++) {
         if (inode->block_pointers[i] == 0) { // 如果二次间接索引还未分配
             inode->block_pointers[i] = super_block.get_free_block();
-            auto first_level_buffer = allocate_buffer_cache(inode->block_pointers[i]);
-            // first_level_buffer->clear();
         }
         auto first_level_buffer = allocate_buffer_cache(inode->block_pointers[i]);
-        auto first_level_ptr = reinterpret_cast<uint32_t*>(first_level_buffer->data);
+        auto first_level_ptr = first_level_buffer->read<uint32_t>(0);
         for (int j = 0; j < PTRS_PER_BLOCK; j++) {
             if (first_level_ptr[j] == 0) { // 如果一级间接索引块中的指针未分配
-                first_level_ptr[j] = super_block.get_free_block(); // 分配一级间接索引块
+                auto id = super_block.get_free_block();
+                write_buffer(first_level_buffer, &id, j);
                 auto second_level_buffer = allocate_buffer_cache(first_level_ptr[j]);
-                // second_level_buffer->clear();
-                auto second_level_ptr = reinterpret_cast<uint32_t*>(second_level_buffer->data);
-                second_level_ptr[0] = super_block.get_free_block(); // 分配实际的数据块
+                auto id2 = super_block.get_free_block();
+                write_buffer(second_level_buffer, &id2, 0);
                 return;
             } else {
                 auto second_level_buffer = allocate_buffer_cache(first_level_ptr[j]);
-                auto second_level_ptr = reinterpret_cast<uint32_t*>(second_level_buffer->data);
+                auto second_level_ptr = second_level_buffer->read<uint32_t>(0);
                 for (int k = 0; k < PTRS_PER_BLOCK; k++) {
                     if (second_level_ptr[k] == 0) { // 如果二级间接索引块中的指针未分配
-                        second_level_ptr[k] = super_block.get_free_block(); // 分配实际的数据块
+                        auto id = super_block.get_free_block();
+                        write_buffer(second_level_buffer, &id, k);
                         return;
                     }
                 }
@@ -268,33 +243,31 @@ void FileSystem::alloc_new_block(Inode *inode) {
     // 三次间接索引
     if (inode->block_pointers[9] == 0) { // 如果三次间接索引还未分配
         inode->block_pointers[9] = super_block.get_free_block();
-        auto first_level_buffer = allocate_buffer_cache(inode->block_pointers[9]);
-        // first_level_buffer->clear();
     }
     auto first_level_buffer = allocate_buffer_cache(inode->block_pointers[9]);
-    auto first_level_ptr = reinterpret_cast<uint32_t*>(first_level_buffer->data);
+    auto first_level_ptr = first_level_buffer->read<uint32_t>(0);
     for (int i = 0; i < PTRS_PER_BLOCK; i++) {
         if (first_level_ptr[i] == 0) {
-            first_level_ptr[i] = super_block.get_free_block();
-            auto second_level_buffer = allocate_buffer_cache(first_level_ptr[i]);
-            // second_level_buffer->clear();
+            auto id = super_block.get_free_block();
+            write_buffer(first_level_buffer, &id, i);
         }
         auto second_level_buffer = allocate_buffer_cache(first_level_ptr[i]);
-        auto second_level_ptr = reinterpret_cast<uint32_t*>(second_level_buffer->data);
+        auto second_level_ptr = second_level_buffer->read<uint32_t>(0);
         for (int j = 0; j < PTRS_PER_BLOCK; j++) {
             if (second_level_ptr[j] == 0) {
-                second_level_ptr[j] = super_block.get_free_block();
+                auto id = super_block.get_free_block();
+                write_buffer(second_level_buffer, &id, j);
                 auto third_level_buffer = allocate_buffer_cache(second_level_ptr[j]);
-                // third_level_buffer->clear();
-                auto third_level_ptr = reinterpret_cast<uint32_t*>(third_level_buffer->data);
-                third_level_ptr[0] = super_block.get_free_block(); // 分配实际的数据块
+                auto id2 = super_block.get_free_block();
+                write_buffer(third_level_buffer, &id2, 0);
                 return;
             } else {
                 auto third_level_buffer = allocate_buffer_cache(second_level_ptr[j]);
-                auto third_level_ptr = reinterpret_cast<uint32_t*>(third_level_buffer->data);
+                auto third_level_ptr = third_level_buffer->read<uint32_t>(0);
                 for (int k = 0; k < PTRS_PER_BLOCK; k++) {
                     if (third_level_ptr[k] == 0) {
-                        third_level_ptr[k] = super_block.get_free_block();
+                        auto id = super_block.get_free_block();
+                        write_buffer(third_level_buffer, &id, k);
                         return;
                     }
                 }
@@ -304,24 +277,24 @@ void FileSystem::alloc_new_block(Inode *inode) {
 }
 
 void FileSystem::write_back_cache_block(BufferCache *pCache) {
-    std::vector<char> data = std::vector<char>(pCache->data, pCache->data + BLOCK_SIZE);
+    auto p_start = pCache->read<char>(0);
+    std::vector<char> data = std::vector<char>(p_start, p_start + BLOCK_SIZE);
     disk_manager.write_block(pCache->block_no, data);
-    pCache->dirty = false;
+    pCache->set_dirty(false);
 }
 
 void FileSystem::set_directory_entry(Inode *pInode, uint32_t num, uint32_t id, const std::string &basicString) {
     auto block_no = get_block_pointer(pInode, num / 16);
-    if (block_no < 60) {
+    if (block_no < BLOCK_START_INDEX) {
         throw std::runtime_error("Block not allocated: " + std::to_string(block_no));
     }
     auto buffer = allocate_buffer_cache(block_no);
-    auto dir_entry = reinterpret_cast<DirectoryEntry *>(buffer->data + sizeof(DirectoryEntry) * (num % 16));
-    dir_entry->inode_id = id;
-    std::strcpy(dir_entry->name, basicString.c_str());
-    buffer->dirty = true;
+    DirectoryEntry entry(id, basicString.c_str());
+    write_buffer(buffer, &entry, num % 16);
 }
 
 std::string FileSystem::get_current_dir() {
+    std::string current_path = pwd();
     // 解析路径最后一个 / 后的内容
     if (current_path == "/") {
         return "/";
@@ -334,7 +307,7 @@ std::string FileSystem::get_current_dir() {
 }
 
 std::vector<std::string> FileSystem::ls() {
-    auto inode = open_dir(current_path);
+    auto inode = allocate_memory_inode(current_inode_id);
     std::vector<std::string> entries;
     for (uint32_t i = 0; i < inode->get_directory_num(); i++) {
         auto dir_entry = get_directory_entry(inode, i);
@@ -345,7 +318,12 @@ std::vector<std::string> FileSystem::ls() {
 }
 
 void FileSystem::mkdir(const std::string &dir_name) {
-    auto dir_inode = open_dir(current_path);
+    // 目录名最长28字节
+    if (dir_name.size() > 28) {
+        throw std::runtime_error("Directory name too long: " + dir_name);
+    }
+
+    auto dir_inode = allocate_memory_inode(current_inode_id);
     auto entries = ls();
     if (std::find(entries.begin(), entries.end(), dir_name) != entries.end()) {
         throw std::runtime_error("Directory already exists: " + dir_name);
@@ -360,13 +338,10 @@ void FileSystem::mkdir(const std::string &dir_name) {
 
     // 更新当前目录
     auto buffer = allocate_buffer_cache(new_dir_inode->block_pointers[0]);
-    auto dir_entry = reinterpret_cast<DirectoryEntry *>(buffer->data);
-    dir_entry->inode_id = new_dir_inode->inode_id;
-    std::strcpy(dir_entry->name, ".");
-    dir_entry++;
-    dir_entry->inode_id = dir_inode->inode_id;
-    std::strcpy(dir_entry->name, "..");
-    buffer->dirty = true;
+    DirectoryEntry entry1(new_dir_inode->inode_id, ".");
+    DirectoryEntry entry2(dir_inode->inode_id, "..");
+    write_buffer(buffer, &entry1, 0);
+    write_buffer(buffer, &entry2, 1);
 
     /*
      * 更新父目录
@@ -376,8 +351,7 @@ void FileSystem::mkdir(const std::string &dir_name) {
     for (uint32_t i = 0; i < dir_inode->get_directory_num(); i++) {
         auto entry = get_directory_entry(dir_inode, i);
         if (entry->inode_id == 0) {
-            entry->inode_id = new_dir_inode->inode_id;
-            std::strcpy(entry->name, dir_name.c_str());
+            set_directory_entry(dir_inode, i, new_dir_inode->inode_id, dir_name);
             return;
         }
     }
@@ -394,19 +368,42 @@ void FileSystem::mkdir(const std::string &dir_name) {
 }
 
 std::string FileSystem::pwd() {
-    return current_path;
+    // 从当前目录开始，一直通过 .. 找到父目录，直到到根目录
+    std::string path;
+    auto inode = allocate_memory_inode(current_inode_id);
+
+    while (inode->inode_id != 1) {
+        auto parent_inode = allocate_memory_inode(get_parent_inode_id(inode));
+        for (uint32_t i = 0; i < parent_inode->get_directory_num(); i++) {
+            auto dir_entry = get_directory_entry(parent_inode, i);
+            if (dir_entry->inode_id == inode->inode_id) {
+                std::stringstream ss;
+                ss << "/" << dir_entry->name << path;
+                path = ss.str();
+                break;
+            }
+        }
+        inode = parent_inode;
+    }
+
+    if (path.empty()) {
+        path = "/";
+    }
+    return path;
 }
 
 void FileSystem::read_from_disk_to_cache(const uint32_t &block_no, BufferCache *cache_block) {
     auto data = disk_manager.read_block(block_no, 1);
     cache_block->block_no = block_no;
-    std::move(data.begin(), data.end(), cache_block->data);
+    (void) cache_block->write<char>(data.data(), 0, data.size());
 }
 
 void FileSystem::write_cache_to_disk(BufferCache *cache_block) {
-    disk_manager.write_block(cache_block->block_no,
-                             std::vector<char>(cache_block->data, cache_block->data + BLOCK_SIZE));
-    cache_block->dirty = false;
+    auto ptr = cache_block->read<char>(0);
+    auto data = std::vector<char>(ptr, ptr + BLOCK_SIZE);
+
+    disk_manager.write_block(cache_block->block_no, data);
+    cache_block->set_dirty(false);
 }
 
 Inode *FileSystem::allocate_memory_inode(const uint32_t &inode_id) {
@@ -429,7 +426,7 @@ Inode *FileSystem::allocate_memory_inode(const uint32_t &inode_id) {
         // 从高速缓存块中读取相应的数据，写进来
         auto [block_no, _num] = inode_id_to_block_no(inode_id);
         auto buffer = allocate_buffer_cache(block_no);
-        DiskInode disk_inode = *reinterpret_cast<DiskInode *>(buffer->data + sizeof(DiskInode) * _num);
+        DiskInode disk_inode = *buffer->read<DiskInode>(_num);
         *m_inode = Inode::to_inode(disk_inode, inode_id);
         return m_inode;
     }
@@ -441,14 +438,12 @@ Inode *FileSystem::allocate_memory_inode(const uint32_t &inode_id) {
         auto [block_no, _num] = inode_id_to_block_no(m_inode->inode_id);
         auto buffer = allocate_buffer_cache(block_no);
         DiskInode disk_inode = Inode::to_disk_inode(*m_inode);
-        std::memcpy(buffer->data + sizeof(DiskInode) * _num, reinterpret_cast<char *>(&disk_inode),
-                    sizeof(DiskInode));
-        buffer->dirty = true;
+        write_buffer(buffer, &disk_inode, _num);
     }
     // 从高速缓存块中读取相应的数据，写进来
     auto [block_no, _num] = inode_id_to_block_no(inode_id);
     auto buffer = allocate_buffer_cache(block_no);
-    DiskInode disk_inode = *reinterpret_cast<DiskInode *>(buffer->data + sizeof(DiskInode) * _num);
+    DiskInode disk_inode = *buffer->read<DiskInode>(_num);
     *m_inode = Inode::to_inode(disk_inode, inode_id);
     device_m_inodes.push_back(m_inode);
     return m_inode;
@@ -494,7 +489,7 @@ FileSystem::FileSystem() : disk_manager(DISK_PATH, DISK_SIZE), open_files() {
 
     // 初始化打开文件表, 全部置空
     for (auto &open_file: open_files) {
-        open_file = nullptr;
+        open_file.clear();
     }
 
     // 初始化内存Inode
@@ -512,12 +507,293 @@ FileSystem::FileSystem() : disk_manager(DISK_PATH, DISK_SIZE), open_files() {
     device_buffer_cache.clear();
 
     // 打开根目录
-    current_path = "/";
+    current_inode_id = 1;
+
+    if (exist("/root")) {
+        cd("/root");
+    }
 }
 
 std::pair<uint32_t, uint32_t> FileSystem::inode_id_to_block_no(const uint32_t &inode_id) {
     uint32_t block_no = inode_id / 8 + 2;
     uint32_t offset = inode_id % 8;
     return std::make_pair(block_no, offset);
+}
+
+template<typename T>
+void FileSystem::write_buffer(BufferCache *pCache, const T *value, const uint32_t &index, uint32_t size, bool index_by_char) {
+    bool write_to_bottom = pCache->write<T>(value, index, size, index_by_char);
+    if (write_to_bottom) {
+        write_cache_to_disk(pCache);
+    }
+}
+
+void FileSystem::cd(const std::string &path) {
+    if (path.empty()) {
+        return;
+    }
+
+    Inode *current_inode = path[0] == '/' ? allocate_memory_inode(1) :
+                           allocate_memory_inode(current_inode_id);
+
+    auto dirs = parse_path(path);
+    for (const auto &dir: dirs) {
+        // 如果当前目录中找不到dir，抛出异常
+        bool found = false;
+        for (uint32_t i = 0; i < current_inode->get_directory_num(); i++) {
+            auto dir_entry = get_directory_entry(current_inode, i);
+            if (dir_entry->inode_id != 0 && dir_entry->name == dir) {
+                current_inode = allocate_memory_inode(dir_entry->inode_id);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            std::stringstream ss;
+            ss << "Directory not found: " << dir;
+            throw std::runtime_error(ss.str());
+        }
+        if (!current_inode->is_directory()) {
+            std::stringstream ss;
+            ss << "Not directory: " << dir;
+            throw std::runtime_error(ss.str());
+        }
+    }
+
+    current_inode_id = current_inode->inode_id;
+}
+
+const uint32_t &FileSystem::get_parent_inode_id(Inode *pInode) {
+    for (uint32_t i = 0; i < pInode->get_directory_num(); i++) {
+        auto dir_entry = get_directory_entry(pInode, i);
+        if (dir_entry->inode_id != 0 && std::string(dir_entry->name) == "..") {
+            return dir_entry->inode_id;
+        }
+    }
+    throw std::runtime_error("Parent directory not found");
+}
+
+void FileSystem::rm(const std::string &dir_name) {
+    auto dir_inode = allocate_memory_inode(current_inode_id);
+    for (uint32_t i = 0; i < dir_inode->get_directory_num(); i++) {
+        auto entry = get_directory_entry(dir_inode, i);
+        if (entry->inode_id != 0 && std::string(entry->name) == dir_name) {
+            auto inode = allocate_memory_inode(entry->inode_id);
+            if (inode->is_directory() && inode->get_directory_num() > 2) {
+                throw std::runtime_error("Directory not empty: " + dir_name);
+            }
+            // set_directory_entry(dir_inode, i, 0, "");
+            // 把当前文件夹下的最后一个目录覆盖到这个位置
+            auto last_entry = get_directory_entry(dir_inode, dir_inode->get_directory_num() - 1);
+            set_directory_entry(dir_inode, i, last_entry->inode_id, last_entry->name);
+            set_directory_entry(dir_inode, dir_inode->get_directory_num() - 1, 0, ""); // TODO 可以删去这一行，保留为了测试的时候好看
+            dir_inode->file_size -= sizeof(DirectoryEntry);
+            free_memory_inode(inode);
+            return;
+        }
+    }
+    throw std::runtime_error("Directory not found: " + dir_name);
+}
+
+void FileSystem::init() {
+    format();
+    mkdir("root");
+    mkdir("home");
+    mkdir("etc");
+    mkdir("bin");
+    mkdir("usr");
+    mkdir("dev");
+    cd("/root");
+}
+
+bool FileSystem::exist(const std::string &path) {
+    try {
+        get_inode_by_path(path);
+        return true;
+    } catch (std::runtime_error &e) {
+        return false;
+    }
+}
+
+void FileSystem::touch(const std::string &file_name) {
+    auto dir_inode = allocate_memory_inode(current_inode_id);
+    auto entries = ls();
+    if (std::find(entries.begin(), entries.end(), file_name) != entries.end()) {
+        throw std::runtime_error("File already exists: " + file_name);
+    }
+
+    auto new_file_inode = allocate_memory_inode(super_block.get_free_inode());
+    new_file_inode->file_type = FileType::FILE;
+    new_file_inode->file_size = 0;
+
+    for (uint32_t i = 0; i < dir_inode->get_directory_num(); i++) {
+        auto entry = get_directory_entry(dir_inode, i);
+        if (entry->inode_id == 0) {
+            set_directory_entry(dir_inode, i, new_file_inode->inode_id, file_name);
+            return;
+        }
+    }
+    if (dir_inode->get_directory_num() % 16 == 0) {
+        alloc_new_block(dir_inode);
+    }
+    set_directory_entry(dir_inode, dir_inode->get_directory_num(), new_file_inode->inode_id, file_name);
+    dir_inode->file_size += sizeof(DirectoryEntry);
+}
+
+void FileSystem::free_memory_inode(Inode *pInode) {
+    free_m_inodes.push_back(pInode);
+    device_m_inodes.remove(pInode);
+
+    // 释放Inode
+    super_block.inode_bitmap.reset(pInode->inode_id);
+
+    // 释放Inode指向的所有数据块
+    for (int i = 0; i < (pInode->file_size / BLOCK_SIZE) + 1; i++) {
+        auto block_no = get_block_pointer(pInode, i);
+        if (block_no >= BLOCK_START_INDEX) {
+            super_block.block_bitmap.reset(block_no - BLOCK_START_INDEX);
+        }
+    }
+}
+
+void FileSystem::save() {
+    // 将superblock写回
+    std::vector<char> super_block_data(sizeof(SuperBlock));
+    std::memcpy(super_block_data.data(), &super_block, sizeof(super_block));
+    disk_manager.write_block(0, super_block_data);
+
+    // 将内存Inode和高速缓存写回磁盘
+    for (auto &m_inode: m_inodes) {
+        write_back_inode(&m_inode);
+    }
+
+    for (auto &cache_block: buffer_cache) {
+        if (cache_block.is_dirty()) {
+            write_back_cache_block(&cache_block);
+        }
+    }
+}
+
+uint32_t FileSystem::fopen(const std::string &file_path) {
+    auto dir_inode = get_inode_by_path(file_path);
+    if (dir_inode->is_directory()) {
+        throw std::runtime_error("Is a directory instead of file: " + file_path);
+    }
+    for (int fd = 0; fd < OPEN_FILE_NUM; fd++) {
+        auto &open_file = open_files[fd];
+        if (open_file.is_busy() && open_file.inode_id == dir_inode->inode_id) {
+            // 抛出异常：文件+文件路径+已经被打开，编号是[fd]
+            std::stringstream ss;
+            ss << "File " << file_path << " already opened, fd=[" << fd << "]";
+            throw std::runtime_error(ss.str());
+        }
+    }
+    for (int fd = 0; fd < OPEN_FILE_NUM; fd++) {
+        auto &open_file = open_files[fd];
+        if (!open_file.is_busy()) {
+            open_file.inode_id = dir_inode->inode_id;
+            open_file.offset = 0;
+            open_file.reference_count++;
+            return fd;
+        }
+    }
+    // 超过最大打开文件数量
+    throw std::runtime_error("Exceeded maximum number of open files");
+}
+
+void FileSystem::fclose(const uint32_t &file_id) {
+    auto &open_file = open_files[file_id];
+    if (open_file.is_busy()) {
+        open_file.reference_count--;
+        if (open_file.reference_count == 0) {
+            open_file.clear();
+            return;
+        }
+    }
+    // 抛异常，没有打开的文件编号是[fd]
+    throw std::runtime_error("No open file, fd=[" + std::to_string(file_id) + "]");
+}
+
+void FileSystem::fwrite(const uint32_t &file_id, const char *data, const uint32_t &size) {
+    auto &open_file = open_files[file_id];
+    if (!open_file.is_busy()) {
+        throw std::runtime_error("File not opened: " + std::to_string(file_id));
+    }
+    auto inode = allocate_memory_inode(open_file.inode_id);
+
+    uint32_t offset = open_file.offset;
+    uint32_t ptr = offset;
+    while(ptr - offset < size) {
+        // 获取、分配数据块
+        if (inode->file_size % BLOCK_SIZE == 0) {
+            alloc_new_block(inode);
+        }
+        auto block_no = get_block_pointer(inode, ptr / BLOCK_SIZE);
+
+        // 写入数据块
+        auto buffer = allocate_buffer_cache(block_no);
+        uint32_t write_size = std::min(BLOCK_SIZE - ptr % BLOCK_SIZE, size - (ptr - offset));
+        write_buffer(buffer, data + (ptr - offset), ptr % BLOCK_SIZE, write_size, true);
+        ptr += write_size;
+
+        // 更新数据
+        inode->file_size = std::max(inode->file_size, ptr);
+        open_file.offset = ptr;
+    }
+}
+
+void FileSystem::fread(const uint32_t &file_id, char *data, const uint32_t &size) {
+    auto &open_file = open_files[file_id];
+    if (!open_file.is_busy()) {
+        throw std::runtime_error("File not opened: " + std::to_string(file_id));
+    }
+    auto inode = allocate_memory_inode(open_file.inode_id);
+
+    uint32_t offset = open_file.offset;
+    uint32_t ptr = offset;
+    while(ptr - offset < size && ptr < inode->file_size) {
+        // 获取数据块
+        auto block_no = get_block_pointer(inode, ptr / BLOCK_SIZE);
+        if (block_no < BLOCK_START_INDEX) {
+            throw std::runtime_error("Block not allocated: " + std::to_string(block_no));
+        }
+
+        // 读取数据块
+        auto buffer = allocate_buffer_cache(block_no);
+        uint32_t read_size = std::min(BLOCK_SIZE - ptr % BLOCK_SIZE, size - (ptr - offset));
+        read_size = std::min(read_size, inode->file_size - ptr);
+
+        auto ptr_data = buffer->read<char>(ptr % BLOCK_SIZE);
+        std::memcpy(data + (ptr - offset), ptr_data, read_size);
+        ptr += read_size;
+
+        // 更新数据
+        open_file.offset = ptr;
+    }
+}
+
+void FileSystem::fseek(const uint32_t &file_id, const uint32_t &offset) {
+    auto &open_file = open_files[file_id];
+    if (!open_file.is_busy()) {
+        throw std::runtime_error("File not opened: " + std::to_string(file_id));
+    }
+    open_file.offset = offset;
+}
+
+std::string FileSystem::cat(const std::string &file_name) {
+    auto inode = get_inode_by_path(file_name);
+    if (inode->is_directory()) {
+        throw std::runtime_error("Is a directory instead of file: " + file_name);
+    }
+    auto file_id = fopen(file_name);
+    auto offset = open_files[file_id].offset;
+    fseek(file_id, 0);
+
+    char buffer[inode->file_size];
+    fread(file_id, buffer, inode->file_size);
+
+    fseek(file_id, offset);
+    fclose(file_id);
+    return {buffer, inode->file_size};
 }
 

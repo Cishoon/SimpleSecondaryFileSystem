@@ -2035,7 +2035,7 @@ inline int Stat(const char* path, StatStruct* buf) {
   // stat function not implemented on ESP8266
   return 0;
 }
-inline int RmDir(const char* dir) { return rmdir(dir); }
+inline int RmDir(const char* dir) { return rm(dir); }
 inline bool IsDir(const StatStruct& st) { return S_ISDIR(st.st_mode); }
 #endif
 
@@ -2047,7 +2047,7 @@ inline int FileNo(FILE* file) { return fileno(file); }
 #if GTEST_HAS_FILE_SYSTEM
 inline int Stat(const char* path, StatStruct* buf) { return stat(path, buf); }
 #ifdef GTEST_OS_QURT
-// QuRT doesn't support any directory functions, including rmdir
+// QuRT doesn't support any directory functions, including rm
 inline int RmDir(const char*) { return 0; }
 #else
 inline int RmDir(const char* dir) { return rmdir(dir); }

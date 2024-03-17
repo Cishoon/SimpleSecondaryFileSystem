@@ -6,19 +6,65 @@
 #include "common/common.hpp"
 
 Shell::Shell() {
-    commands["help"] = { [this](const std::vector<std::string>& args = {}) { this->help(); }, "Display available commands", "help" };
-    commands["exit"] = { [this](const std::vector<std::string>& args = {}) { this->exit_shell(); }, "Exit the shell", "exit" };
-    commands["format"] = { [this](const std::vector<std::string>& args = {}) { this->format(); }, "Format the disk", "format" };
-    commands["ls"] = { [this](const std::vector<std::string>& args = {}) { this->ls(); }, "List directory contents", "ls" };
-    commands["pwd"] = { [this](const std::vector<std::string>& args = {}) { std::cout << fs.pwd() << std::endl; }, "Print working directory", "pwd" };
-    commands["echo"] = { [](const std::vector<std::string>& args) { Shell::echo(args); }, "Print the message to the console", "echo <message> [count]" };
-    commands["mkdir"] = { [this](const std::vector<std::string>& args) {this->mkdir(args);}, "Create a new directory", "mkdir <dir_name>"};
+    commands["help"] = {[this](const std::vector<std::string> &args = {}) { this->help(); },
+                        "Display available commands",
+                        "help"};
+    commands["exit"] = {[this](const std::vector<std::string> &args = {}) { this->exit_shell(); },
+                        "Exit the shell",
+                        "exit"};
+    commands["format"] = {[this](const std::vector<std::string> &args = {}) { this->format(); },
+                          "Format the disk",
+                          "format"};
+    commands["ls"] = {[this](const std::vector<std::string> &args = {}) { this->ls(); },
+                      "List directory contents",
+                      "ls"};
+    commands["pwd"] = {[this](const std::vector<std::string> &args = {}) { std::cout << fs.pwd() << std::endl; },
+                       "Print working directory",
+                       "pwd"};
+    commands["echo"] = {[](const std::vector<std::string> &args) { Shell::echo(args); },
+                        "Print the message to the console",
+                        "echo <message> [count]"};
+    commands["mkdir"] = {[this](const std::vector<std::string> &args) { this->mkdir(args); },
+                         "Create a new directory",
+                         "mkdir <dir_name>"};
+    commands["cd"] = {[this](const std::vector<std::string> &args = {}) { this->cd(args); },
+                      "Change the current directory",
+                      "cd <dir>"};
+    commands["init"] = {[this](const std::vector<std::string> &args = {}) { this->init(); },
+                        "Initialize the file system (create root directory and root inode)",
+                        "init"};
+    commands["touch"] = {[this](const std::vector<std::string> &args) { this->touch(args); },
+                         "Create a new file",
+                         "touch <file_name>"};
+    commands["rm"] = {[this](const std::vector<std::string> &args) { this->rm(args); },
+                      "Remove a file or directory",
+                      "rm <file_name>"};
+    commands["save"] = {[this](const std::vector<std::string> &args = {}) { fs.save(); },
+                        "Save the file system to disk",
+                        "save"};
+    commands["fopen"] = {[this](const std::vector<std::string> &args) { this->fopen(args); },
+                         "Open a file",
+                         "fopen <file_name>"};
+    commands["fclose"] = {[this](const std::vector<std::string> &args) { this->fclose(args); },
+                          "Close a file",
+                          "fclose <file_id>"};
+    commands["fseek"] = {[this](const std::vector<std::string> &args) {this->fseek(args);},
+                         "Move the file pointer",
+                         "fseek <file_id> <offset>"};
+    commands["fwrite"] = {[this](const std::vector<std::string> &args) {this->fwrite(args);},
+                            "Write something to a file multiple times",
+                            "fwrite <file_id> <data> [times]"};
+    commands["cat"] = {[this](const std::vector<std::string> &args) {this->cat(args);},
+                            "Read the content of a file",
+                            "cat <file_name>"};
+
 }
 
 void Shell::run() {
     std::string input;
     while (is_active) {
         std::string current_dir = fs.get_current_dir();
+        current_dir = current_dir == "root" ? "~" : current_dir;
         std::cout << "[" << current_dir << "]# "; // 显示提示符
         std::getline(std::cin, input); // 获取用户输入
         process_command(input); // 处理命令
@@ -38,9 +84,9 @@ void Shell::process_command(const std::string &input) {
 
     auto it = commands.find(command);
     if (it != commands.end()) {
-        try{
+        try {
             it->second.action(args); // 使用参数列表执行命令
-        } catch (const std::exception& e) {
+        } catch (const std::exception &e) {
             // std::cerr << "Error: " << e.what() << std::endl;
             std::cout << red << "Error: " << e.what() << reset << std::endl;
         }
@@ -51,7 +97,7 @@ void Shell::process_command(const std::string &input) {
 
 void Shell::help() {
     std::cout << "Available commands:\n";
-    for (const auto& cmd : commands) {
+    for (const auto &cmd: commands) {
         // 命令名以蓝色显示
         std::cout << "- " << blue << cmd.first << reset;
         // 介绍文本以默认颜色显示
@@ -79,8 +125,8 @@ void Shell::ls() {
 
     // 找到最长的文件名
     int max_length = 0;
-    for (const auto& entry : entries) {
-        max_length = std::max(max_length, (int)entry.size());
+    for (const auto &entry: entries) {
+        max_length = std::max(max_length, (int) entry.size());
     }
 
     // 确保有空间至少放置一个文件名加上间隔
@@ -90,7 +136,7 @@ void Shell::ls() {
     auto entries_per_line = terminal_width / max_length;
 
     int count = 0;
-    for (const auto& entry : entries) {
+    for (const auto &entry: entries) {
         std::cout << std::left << std::setw(max_length) << entry;
         if (++count % entries_per_line == 0)
             std::cout << std::endl;
@@ -100,7 +146,7 @@ void Shell::ls() {
         std::cout << std::endl;
 }
 
-void Shell::echo(const std::vector<std::string>& args) {
+void Shell::echo(const std::vector<std::string> &args) {
     // std::string message, int count
     std::string message;
     int count;
@@ -126,4 +172,100 @@ void Shell::mkdir(const std::vector<std::string> &args) {
         return;
     }
     fs.mkdir(args[0]);
+}
+
+void Shell::cd(const std::vector<std::string> &vector) {
+    if (vector.empty()) {
+        std::cout << "Usage: cd <dir>" << std::endl;
+        return;
+    }
+    fs.cd(vector[0]);
+}
+
+void Shell::init() {
+    fs.init();
+}
+
+void Shell::touch(const std::vector<std::string> &vector) {
+    if (vector.empty()) {
+        std::cout << "Usage: touch <file_name>" << std::endl;
+        return;
+    }
+    fs.touch(vector[0]);
+}
+
+void Shell::rm(const std::vector<std::string> &vector) {
+    if (vector.empty()) {
+        std::cout << "Usage: rm <file_name>" << std::endl;
+        return;
+    }
+    fs.rm(vector[0]);
+}
+
+void Shell::fopen(const std::vector<std::string> &vector) {
+    if (vector.empty()) {
+        std::cout << "Usage: fopen <file_name>" << std::endl;
+        return;
+    }
+    auto fd = fs.fopen(vector[0]);
+    std::cout << "[" << blue << fd << reset << "]" << std::endl;
+}
+
+void Shell::fclose(const std::vector<std::string> &vector) {
+    if (vector.empty()) {
+        std::cout << "Usage: fclose <file_id>" << std::endl;
+        return;
+    }
+    uint32_t fd;
+    try{
+        fd = std::stoi(vector[0]);
+    } catch (...) {
+        throw std::runtime_error("Invalid file id");
+    }
+    fs.fclose(fd);
+}
+
+void Shell::fseek(const std::vector<std::string> &vector) {
+    if (vector.size() < 2) {
+        std::cout << "Usage: fseek <file_id> <offset>" << std::endl;
+        return;
+    }
+    uint32_t fd, offset;
+    try{
+        fd = std::stoi(vector[0]);
+        offset = std::stoi(vector[1]);
+    } catch (...) {
+        throw std::runtime_error("Invalid file id or offset");
+    }
+    fs.fseek(fd, offset);
+}
+
+void Shell::fwrite(const std::vector<std::string> &vector) {
+    if (vector.size() < 2) {
+        std::cout << "Usage: fwrite <file_id> <data> [times]" << std::endl;
+        return;
+    }
+    uint32_t fd, times;
+    try{
+        fd = std::stoi(vector[0]);
+        times = vector.size() == 3 ? std::stoi(vector[2]) : 1;
+    } catch (...) {
+        throw std::runtime_error("Invalid file id or size");
+    }
+    // fs.fwrite(fd, vector[1].c_str(), size);
+    // 写入的数据是times个vector[1]
+    std::stringstream ss;
+    for (int i = 0; i < times; i++) {
+        ss << vector[1];
+    }
+    fs.fwrite(fd, ss.str().c_str(), ss.str().size());
+}
+
+void Shell::cat(const std::vector<std::string> &vector) {
+    if (vector.empty()) {
+        std::cout << "Usage: cat <file_name>" << std::endl;
+        return;
+    }
+    std::string content = fs.cat(vector[0]);
+    std::cout << content << std::endl;
 }

@@ -14,5 +14,16 @@ class File {
 public:
     uint32_t reference_count = 0;
     uint32_t offset = 0;
-    Inode* inode_ptr = nullptr;
+    uint32_t inode_id = 0;
+
+    File() = default;
+    void clear() {
+        reference_count = 0;
+        offset = 0;
+        inode_id = 0;
+    }
+
+    [[nodiscard]] bool is_busy() const {
+        return reference_count > 0;
+    }
 };

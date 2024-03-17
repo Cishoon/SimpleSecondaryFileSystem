@@ -33,8 +33,7 @@ private:
     SuperBlock super_block;
 
     // 打开文件表
-    std::array<File *, OPEN_FILE_NUM> open_files;
-
+    std::array<File, OPEN_FILE_NUM> open_files;
 
     // 内存Inode
     std::array<Inode, MEMORY_INODE_NUM> m_inodes;
@@ -49,8 +48,8 @@ private:
     std::list<BufferCache *> free_buffer_cache; // 空闲缓存队列
 
 private:
-    // 当前文件路径
-    std::string current_path;
+    // 当前文件InodeId
+    uint32_t current_inode_id;
 
 public:
     FileSystem();
@@ -58,6 +57,11 @@ public:
     ~FileSystem();
 
     void format();
+
+    void init();
+
+    void save();
+
 
 private:
     /**
@@ -99,17 +103,17 @@ private:
     const uint32_t &get_block_pointer(Inode *pInode, uint32_t i);
 
     /**
-     * 打开文件夹
+     * 通过路径获取Inode指针
      * @param path 文件夹路径
      * @return Inode* 文件夹Inode指针
      */
-    Inode *open_dir(const std::string &path);
+    Inode *get_inode_by_path(const std::string &path);
 
     /**
      * 给Inode分配一个新的盘块
      * @param inode
      */
-    void alloc_new_block(Inode* inode);
+    void alloc_new_block(Inode *inode);
 
     void write_back_inode(Inode *pInode);
 
@@ -142,15 +146,78 @@ public:
      * @param i     第i个目录项
      * @return 目录项指针
      */
-    DirectoryEntry *get_directory_entry(Inode *pInode, uint32_t i);
+    const DirectoryEntry *get_directory_entry(Inode *pInode, uint32_t i);
 
     /**
      * 列出当前目录下所有文件 ls
      */
     std::vector<std::string> ls();
 
+    /**
+     * 进入文件夹 cd
+     * @param path
+     */
+    void cd(const std::string &path);
+
+    /**
+     * 删除文件或目录 rm
+     * @param dir_name 文件名(只能是当前目录下的一个文件或目录)
+     */
+    void rm(const std::string &dir_name);
+
+    /**
+     * 创建文件 touch
+     * @param file_name 文件名(只能是当前目录下的一个文件)
+     */
+    void touch(const std::string &file_name);
+
+    /**
+     * 打开文件 fopen
+     * @param file_path 文件名(只能是当前目录下的一个文件)
+     * @return 该文件打开文件表的id
+     */
+    uint32_t fopen(const std::string &file_path);
+
+    /**
+     * 关闭文件 fclose
+     * @param file_id 文件id
+     */
+    void fclose(const uint32_t &file_id);
+
+    /**
+     * 写文件 fwrite
+     * @param file_id 文件id
+     * @param data  数据
+     * @param size  数据大小
+     */
+    void fwrite(const uint32_t &file_id, const char *data, const uint32_t &size);
+
+    /**
+     * 读文件 fread
+     * @param file_id 文件id
+     * @param data  数据
+     * @param size  数据大小
+     */
+    void fread(const uint32_t &file_id, char *data, const uint32_t &size);
+
+    /**
+     * 移动读写指针 fseek
+     * @param file_id 文件id
+     * @param offset  偏移量
+     */
+    void fseek(const uint32_t &file_id, const uint32_t &offset);
+
+    std::string cat(const std::string &file_name);
+
 private:
+    template<typename T>
+    void write_buffer(BufferCache *pCache, const T *value, const uint32_t &index, uint32_t size = 0, bool index_by_char = false);
 
 
+    const uint32_t &get_parent_inode_id(Inode *pInode);
+
+    bool exist(const std::string &path);
+
+    void free_memory_inode(Inode *pInode);
 
 };

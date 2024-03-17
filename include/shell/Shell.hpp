@@ -48,4 +48,22 @@ private:
 
 
     void mkdir(const std::vector<std::string> &vector);
+
+    void cd(const std::vector<std::string> &vector);
+
+    void init();
+
+    void touch(const std::vector<std::string> &vector);
+
+    void rm(const std::vector<std::string> &vector);
+
+    void fopen(const std::vector<std::string> &vector);
+
+    void fclose(const std::vector<std::string> &vector);
+
+    void fseek(const std::vector<std::string> &vector);
+
+    void fwrite(const std::vector<std::string> &vector);
+
+    void cat(const std::vector<std::string> &vector);
 };
