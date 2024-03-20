@@ -20,4 +20,17 @@ namespace COMMON {
 #endif
     }
 
+    std::string formatBytes(size_t bytes) {
+        const char* units[] = { "B", "KB", "MB", "GB", "TB" };
+        int unitIndex = 0;
+        auto displaySize = (double)bytes;
+        while (displaySize >= 1024 && unitIndex < 4) {
+            displaySize /= 1024.0;
+            ++unitIndex;
+        }
+        std::stringstream stream;
+        stream << std::fixed << std::setprecision(2) << displaySize << " " << units[unitIndex];
+        return stream.str();
+    }
+
 }

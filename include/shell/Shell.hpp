@@ -24,6 +24,8 @@ private:
         std::string usage;
     };
 
+    FileSystem::ProgressCallback callback;
+
 public:
     Shell();
 

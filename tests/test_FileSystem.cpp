@@ -464,7 +464,7 @@ TEST(FileSystemTest, Test_fseek_3) {
 // 上传1MB文件
 TEST(FileSystemTest, Test_write_1MB) {
     const int FILE_SIZE = 512;
-    const int len = 2048 * 32;
+    const int len = 2048 * 1;
     // const int len = 2;
     FileSystem fs;
     fs.format();

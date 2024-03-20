@@ -78,6 +78,10 @@ public:
                 last_i = (i + 1) % block_count;
                 return i + BLOCK_START_INDEX;
             }
+
+            if (i == last_i) {
+                break;
+            }
         }
         // 如果没有空闲Block
         throw std::runtime_error("No free block");

@@ -6,6 +6,26 @@
 #include "common/common.hpp"
 
 Shell::Shell() {
+    callback = [](size_t current, size_t total) {
+        const int barWidth = 50; // 进度条的宽度
+        float progress = static_cast<float>(current) / (float) total; // 计算当前进度（0.0 - 1.0）
+        int pos = static_cast<int>(barWidth * progress); // 计算进度条内已完成部分的长度
+
+        std::cout << "\r["; // 回车符并开始进度条的输出
+        for (int i = 0; i < barWidth; ++i) {
+            if (i < pos) std::cout << "="; // 已完成部分
+            else if (i == pos) std::cout << ">"; // 当前位置
+            else std::cout << " "; // 未完成部分
+        }
+        std::cout << "] " << int(progress * 100.0) << "% " // 显示百分比
+                  << COMMON::formatBytes(current) << " / " << COMMON::formatBytes(total); // 显示已完成和总大小
+        std::cout.flush(); // 立即刷新输出，确保显示更新
+
+        if (current == total) {
+            std::cout << std::endl; // 在完成时换行
+        }
+    };
+
     commands["help"] = {[this](const std::vector<std::string> &args = {}) { this->help(); },
                         "Display available commands",
                         "help"};
@@ -48,22 +68,22 @@ Shell::Shell() {
     commands["fclose"] = {[this](const std::vector<std::string> &args) { this->fclose(args); },
                           "Close a file",
                           "fclose <file_id>"};
-    commands["fseek"] = {[this](const std::vector<std::string> &args) {this->fseek(args);},
+    commands["fseek"] = {[this](const std::vector<std::string> &args) { this->fseek(args); },
                          "Move the file pointer",
                          "fseek <file_id> <offset>"};
-    commands["fwrite"] = {[this](const std::vector<std::string> &args) {this->fwrite(args);},
-                            "Write something to a file multiple times",
-                            "fwrite <file_id> <data> [times]"};
-    commands["cat"] = {[this](const std::vector<std::string> &args) {this->cat(args);},
-                            "Read the content of a file",
-                            "cat <file_name>"};
-    commands["flist"]= {[this](const std::vector<std::string> &args) {this->flist();},
-                            "List all opened files",
-                            "flist"};
-    commands["upload"] = {[this](const std::vector<std::string> &args) {this->upload(args);},
-                            "Upload a real_file to the file system",
-                            "upload <path_in_system> <real_file_path>"};
-    commands["download"] = {[this](const std::vector<std::string> &args) {this->download(args);},
+    commands["fwrite"] = {[this](const std::vector<std::string> &args) { this->fwrite(args); },
+                          "Write something to a file multiple times",
+                          "fwrite <file_id> <data> [times]"};
+    commands["cat"] = {[this](const std::vector<std::string> &args) { this->cat(args); },
+                       "Read the content of a file",
+                       "cat <file_name>"};
+    commands["flist"] = {[this](const std::vector<std::string> &args) { this->flist(); },
+                         "List all opened files",
+                         "flist"};
+    commands["upload"] = {[this](const std::vector<std::string> &args) { this->upload(args); },
+                          "Upload a real_file to the file system",
+                          "upload <path_in_system> <real_file_path>"};
+    commands["download"] = {[this](const std::vector<std::string> &args) { this->download(args); },
                             "Download a real_file from the file system",
                             "download <path_in_system> <real_file_path>"};
 
@@ -226,7 +246,7 @@ void Shell::fclose(const std::vector<std::string> &vector) {
         return;
     }
     uint32_t fd;
-    try{
+    try {
         fd = std::stoi(vector[0]);
     } catch (...) {
         throw std::runtime_error("Invalid file id");
@@ -240,7 +260,7 @@ void Shell::fseek(const std::vector<std::string> &vector) {
         return;
     }
     uint32_t fd, offset;
-    try{
+    try {
         fd = std::stoi(vector[0]);
         offset = std::stoi(vector[1]);
     } catch (...) {
@@ -255,7 +275,7 @@ void Shell::fwrite(const std::vector<std::string> &vector) {
         return;
     }
     uint32_t fd, times;
-    try{
+    try {
         fd = std::stoi(vector[0]);
         times = vector.size() == 3 ? std::stoi(vector[2]) : 1;
     } catch (...) {
@@ -291,8 +311,8 @@ void Shell::upload(const std::vector<std::string> &vector) {
         std::cout << "Usage: upload <path_in_system> <real_file_path>" << std::endl;
         return;
     }
-    const std::string& path_in_system = vector[0];
-    const std::string& real_file_path = vector[1];
+    const std::string &path_in_system = vector[0];
+    const std::string &real_file_path = vector[1];
     // 使用fopen, fwrite, fclose
     if (fs.exist(path_in_system)) {
         throw std::runtime_error("File already exists: " + path_in_system);
@@ -308,7 +328,9 @@ void Shell::upload(const std::vector<std::string> &vector) {
     file.seekg(0, std::ios::beg);
     std::vector<char> buffer(size);
     file.read(buffer.data(), size);
-    fs.fwrite(fd, buffer.data(), size);
+
+
+    fs.fwrite(fd, buffer.data(), size, callback);
     fs.fclose(fd);
 }
 
@@ -317,8 +339,8 @@ void Shell::download(const std::vector<std::string> &vector) {
         std::cout << "Usage: download <path_in_system> <real_file_path>" << std::endl;
         return;
     }
-    const std::string& path_in_system = vector[0];
-    const std::string& real_file_path = vector[1];
+    const std::string &path_in_system = vector[0];
+    const std::string &real_file_path = vector[1];
     // 使用fopen, fread, fclose
     if (!fs.exist(path_in_system)) {
         throw std::runtime_error("File not found: " + path_in_system);
@@ -330,7 +352,7 @@ void Shell::download(const std::vector<std::string> &vector) {
     }
     auto size = fs.get_file_size(fd);
     std::vector<char> buffer(size);
-    fs.fread(fd, buffer.data(), size);
+    fs.fread(fd, buffer.data(), size, callback);
     file.write(buffer.data(), size);
     fs.fclose(fd);
 }

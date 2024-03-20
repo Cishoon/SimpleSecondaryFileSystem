@@ -67,6 +67,7 @@ void FileSystem::format() {
     }
 
     // 清除高速缓存
+    buffer_cache_map.clear();
     device_buffer_cache.clear();
     free_buffer_cache.clear();
     for (auto &cache_block: buffer_cache) {
@@ -155,6 +156,9 @@ const DirectoryEntry *FileSystem::get_directory_entry(Inode *pInode, uint32_t i)
 
 FileSystem::~FileSystem() {
     save();
+
+    // 把缓存块和哈希表释放了
+    buffer_cache_map.clear();
 }
 
 void FileSystem::write_back_inode(Inode *pInode) {
@@ -508,6 +512,12 @@ void FileSystem::write_cache_to_disk(BufferCache *cache_block) {
     //         break;
     //     }
     // }
+    // if (buffer_cache_map.find(cache_block->block_no) != buffer_cache_map.end()) {
+    //     auto it = *buffer_cache_map[cache_block->block_no];
+    //     device_buffer_cache.erase(buffer_cache_map[cache_block->block_no]);
+    //     device_buffer_cache.push_front(it);
+    //     buffer_cache_map[cache_block->block_no] = device_buffer_cache.begin();
+    // }
 }
 
 Inode *FileSystem::allocate_memory_inode(const uint32_t &inode_id) {
@@ -555,14 +565,23 @@ Inode *FileSystem::allocate_memory_inode(const uint32_t &inode_id) {
 
 BufferCache *FileSystem::allocate_buffer_cache(const uint32_t &block_no) {
     // 如果盘块号已经在高速缓存中，直接返回
-    for (auto &cache_block: buffer_cache) {
-        if (cache_block.block_no == block_no) {
-            // 将这个块插回队列的末尾
-            device_buffer_cache.remove(&cache_block);
-            device_buffer_cache.push_back(&cache_block);
-            return &cache_block;
-        }
+    if (buffer_cache_map.find(block_no) != buffer_cache_map.end()) {
+        auto cache_block = *buffer_cache_map[block_no];
+        auto it = buffer_cache_map[block_no];
+        // 将这个块插回队列的末尾
+        device_buffer_cache.erase(it);
+        device_buffer_cache.push_back(cache_block);
+        buffer_cache_map[block_no] = --device_buffer_cache.end();
+        return cache_block;
     }
+    // for (auto &cache_block: buffer_cache) {
+    //     if (cache_block.block_no == block_no) {
+    //         // 将这个块插回队列的末尾
+    //         device_buffer_cache.remove(&cache_block);
+    //         device_buffer_cache.push_back(&cache_block);
+    //         return &cache_block;
+    //     }
+    // }
 
     // 如果有空闲缓存块，直接分配
     if (!free_buffer_cache.empty()) {
@@ -570,6 +589,7 @@ BufferCache *FileSystem::allocate_buffer_cache(const uint32_t &block_no) {
         free_buffer_cache.pop_front();
 
         device_buffer_cache.push_back(cache_block);
+        buffer_cache_map[block_no] = --device_buffer_cache.end();
         read_from_disk_to_cache(block_no, cache_block);
 
         return cache_block;
@@ -577,12 +597,14 @@ BufferCache *FileSystem::allocate_buffer_cache(const uint32_t &block_no) {
 
     // 如果没有空闲缓存块，需要替换
     auto cache_block = device_buffer_cache.front();
+    buffer_cache_map.erase(cache_block->block_no);
     device_buffer_cache.pop_front();
     if (cache_block->is_dirty()) {
         write_cache_to_disk(cache_block);
     }
     read_from_disk_to_cache(block_no, cache_block);
     device_buffer_cache.push_back(cache_block);
+    buffer_cache_map[block_no] = --device_buffer_cache.end();
     return cache_block;
 }
 
@@ -609,6 +631,7 @@ FileSystem::FileSystem() : disk_manager(DISK_PATH, DISK_SIZE), open_files() {
         free_buffer_cache.push_back(&cache_block);
     }
     device_buffer_cache.clear();
+    buffer_cache_map.clear();
 
     // 打开根目录
     current_inode_id = 1;
@@ -859,6 +882,44 @@ void FileSystem::fwrite(const uint32_t &file_id, const char *data, const uint32_
     }
 }
 
+void FileSystem::fwrite(const uint32_t &file_id, const char *data, const uint32_t &size, const ProgressCallback& callback) {
+    auto &open_file = open_files[file_id];
+    if (!open_file.is_busy()) {
+        throw std::runtime_error("File not opened: " + std::to_string(file_id));
+    }
+    auto inode = allocate_memory_inode(open_file.inode_id);
+
+    uint32_t offset = open_file.offset;
+    uint32_t ptr = offset;
+    uint32_t total_written = 0; // 已写入的总字节数
+
+    uint32_t times = 0;
+
+    while (ptr - offset < size) {
+        if (inode->file_size % BLOCK_SIZE == 0) {
+            alloc_new_block(inode);
+        }
+        auto block_no = get_block_pointer(inode, ptr / BLOCK_SIZE);
+
+        auto buffer = allocate_buffer_cache(block_no);
+        uint32_t write_size = std::min(BLOCK_SIZE - ptr % BLOCK_SIZE, size - (ptr - offset));
+        write_buffer(buffer, data + (ptr - offset), ptr % BLOCK_SIZE, write_size, true);
+        ptr += write_size;
+        total_written += write_size;
+
+        // 更新inode和文件的偏移量
+        inode->file_size = std::max(inode->file_size, ptr);
+        open_file.offset = ptr;
+
+        // 检查是否已写入至少1%的数据，并且自上次调用以来进度有更新
+        if (times++ == 5000) {
+            callback(total_written, size); // 调用回调函数
+            times = 0;
+        }
+    }
+    callback(total_written, size);
+}
+
 void FileSystem::fread(const uint32_t &file_id, char *data, const uint32_t &size) {
     auto &open_file = open_files[file_id];
     if (!open_file.is_busy()) {
@@ -887,6 +948,43 @@ void FileSystem::fread(const uint32_t &file_id, char *data, const uint32_t &size
         // 更新数据
         open_file.offset = ptr;
     }
+}
+
+void FileSystem::fread(const uint32_t &file_id, char *data, const uint32_t &size, const ProgressCallback& callback) {
+    auto &open_file = open_files[file_id];
+    if (!open_file.is_busy()) {
+        throw std::runtime_error("File not opened: " + std::to_string(file_id));
+    }
+    auto inode = allocate_memory_inode(open_file.inode_id);
+
+    uint32_t offset = open_file.offset;
+    uint32_t ptr = offset;
+    uint32_t times = 0;
+    while (ptr - offset < size && ptr < inode->file_size) {
+        // 获取数据块
+        auto block_no = get_block_pointer(inode, ptr / BLOCK_SIZE);
+        if (block_no < BLOCK_START_INDEX) {
+            throw std::runtime_error("Block not allocated: " + std::to_string(block_no));
+        }
+
+        // 读取数据块
+        auto buffer = allocate_buffer_cache(block_no);
+        uint32_t read_size = std::min(BLOCK_SIZE - ptr % BLOCK_SIZE, size - (ptr - offset));
+        read_size = std::min(read_size, inode->file_size - ptr);
+
+        auto ptr_data = buffer->read<char>(ptr % BLOCK_SIZE);
+        std::memcpy(data + (ptr - offset), ptr_data, read_size);
+        ptr += read_size;
+
+        // 更新数据
+        open_file.offset = ptr;
+
+        if (times++ == 5000) {
+            callback((ptr-offset), size); // 调用回调函数
+            times = 0;
+        }
+    }
+    callback((ptr-offset), size);
 }
 
 void FileSystem::fseek(const uint32_t &file_id, const uint32_t &offset) {

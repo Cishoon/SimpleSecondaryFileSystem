@@ -3,6 +3,7 @@
 #include <list>
 #include <iostream>
 #include <sstream>
+#include <unordered_map>
 #include <array>
 #include "SuperBlock.hpp"
 #include "DiskInode.hpp"
@@ -11,6 +12,7 @@
 #include "File.hpp"
 #include "DirectoryEntry.hpp"
 #include "BufferCache.hpp"
+#include <functional>
 
 #ifdef RUNNING_TESTS
 #define DISK_PATH "disk_dev.img"
@@ -47,6 +49,7 @@ private:
     // 约定：写入数据push_back，读取数据pop_front
     std::list<BufferCache *> device_buffer_cache; // 设备缓存队列，有哪些缓存已经被加载在内存中了
     std::list<BufferCache *> free_buffer_cache; // 空闲缓存队列
+    std::unordered_map<uint32_t, std::list<BufferCache*>::iterator> buffer_cache_map; // 盘块号到缓存块的映射
 
 private:
     // 当前文件InodeId
@@ -67,6 +70,11 @@ public:
     bool exist(const std::string &path);
 
     uint32_t get_file_size(uint32_t i);
+
+    using ProgressCallback = std::function<void(uint32_t current, uint32_t size)>;
+    void fwrite(const uint32_t &file_id, const char *data, const uint32_t &size, const ProgressCallback& callback);
+
+    void fread(const uint32_t &file_id, char *data, const uint32_t &size, const ProgressCallback &callback);
 
 private:
     /**
@@ -227,4 +235,5 @@ private:
     void free_memory_inode(Inode *pInode);
 
     std::string get_pwd_by_inode(const uint32_t &inode_id);
+
 };
