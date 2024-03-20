@@ -5,12 +5,16 @@
 #include <bitset>
 
 // 磁盘Inode数量，#2~#59，共58个扇区，每个扇区包含8个Inode，共464个Inode
-#define INODE_COUNT (464)
-// 磁盘Block数量，#60~#2047，共1988个扇区
-#define BLOCK_COUNT (1988)
+#define INODE_COUNT (3968)
+// 磁盘Block数量，2097092个扇区
+#define BLOCK_COUNT (2097092)
 
-#define INODE_START_INDEX (2)
-#define BLOCK_START_INDEX (60)
+#define SUPER_BLOCK_SIZE (513)
+#define INODE_SIZE (496)
+
+#define INODE_START_INDEX (SUPER_BLOCK_SIZE)
+#define BLOCK_START_INDEX (SUPER_BLOCK_SIZE + INODE_SIZE)
+
 
 class SuperBlock {
 public:
@@ -25,10 +29,11 @@ public:
     uint32_t last_update_time;
 
     std::bitset<INODE_COUNT> inode_bitmap; // 分配64字节
-    std::bitset<BLOCK_COUNT> block_bitmap; // 分配256字节
+    // 8 + 8 + 64 = 80 512 - 80 = 432 432 / 4 = 108
+    // uint32_t padding[108]{}; // 填充到512字节
 
-    // 8 + 8 + 64 + 256 = 336 字节
-    uint32_t padding[172]{}; // 填充到1024字节
+    std::bitset<BLOCK_COUNT> block_bitmap; // 分配256K字节
+
 public:
     SuperBlock() {
         block_count = BLOCK_COUNT;
@@ -64,11 +69,13 @@ public:
 
     // 获取空闲Block
     uint32_t get_free_block() {
+        static uint32_t last_i = 0;
         // 从位图中找到第一个空闲的Block
-        for (uint32_t i = 0; i < block_count; i++) {
+        for (uint32_t i = last_i; i < block_count; i++) {
             if (!block_bitmap.test(i)) {
                 block_bitmap.set(i);
                 dirty_flag = 1;
+                last_i = (i + 1) % block_count;
                 return i + BLOCK_START_INDEX;
             }
         }
@@ -94,7 +101,7 @@ public:
                     block_bitmap.set(i + k);
                 }
                 dirty_flag = 1;
-                return i;
+                return i + BLOCK_START_INDEX;
             }
         }
         // 如果没有连续的空闲Block

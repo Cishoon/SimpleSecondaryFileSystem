@@ -57,6 +57,15 @@ Shell::Shell() {
     commands["cat"] = {[this](const std::vector<std::string> &args) {this->cat(args);},
                             "Read the content of a file",
                             "cat <file_name>"};
+    commands["flist"]= {[this](const std::vector<std::string> &args) {this->flist();},
+                            "List all opened files",
+                            "flist"};
+    commands["upload"] = {[this](const std::vector<std::string> &args) {this->upload(args);},
+                            "Upload a real_file to the file system",
+                            "upload <path_in_system> <real_file_path>"};
+    commands["download"] = {[this](const std::vector<std::string> &args) {this->download(args);},
+                            "Download a real_file from the file system",
+                            "download <path_in_system> <real_file_path>"};
 
 }
 
@@ -268,4 +277,60 @@ void Shell::cat(const std::vector<std::string> &vector) {
     }
     std::string content = fs.cat(vector[0]);
     std::cout << content << std::endl;
+}
+
+void Shell::flist() {
+    auto files = fs.flist();
+    for (const auto &file: files) {
+        std::cout << "[" << blue << file.first << reset << "] " << file.second << std::endl;
+    }
+}
+
+void Shell::upload(const std::vector<std::string> &vector) {
+    if (vector.size() < 2) {
+        std::cout << "Usage: upload <path_in_system> <real_file_path>" << std::endl;
+        return;
+    }
+    const std::string& path_in_system = vector[0];
+    const std::string& real_file_path = vector[1];
+    // 使用fopen, fwrite, fclose
+    if (fs.exist(path_in_system)) {
+        throw std::runtime_error("File already exists: " + path_in_system);
+    }
+    fs.touch(path_in_system);
+    uint32_t fd = fs.fopen(path_in_system);
+    std::ifstream file(real_file_path, std::ios::binary);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file: " + real_file_path);
+    }
+    file.seekg(0, std::ios::end);
+    auto size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    std::vector<char> buffer(size);
+    file.read(buffer.data(), size);
+    fs.fwrite(fd, buffer.data(), size);
+    fs.fclose(fd);
+}
+
+void Shell::download(const std::vector<std::string> &vector) {
+    if (vector.size() < 2) {
+        std::cout << "Usage: download <path_in_system> <real_file_path>" << std::endl;
+        return;
+    }
+    const std::string& path_in_system = vector[0];
+    const std::string& real_file_path = vector[1];
+    // 使用fopen, fread, fclose
+    if (!fs.exist(path_in_system)) {
+        throw std::runtime_error("File not found: " + path_in_system);
+    }
+    uint32_t fd = fs.fopen(path_in_system);
+    std::ofstream file(real_file_path, std::ios::binary);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file: " + real_file_path);
+    }
+    auto size = fs.get_file_size(fd);
+    std::vector<char> buffer(size);
+    fs.fread(fd, buffer.data(), size);
+    file.write(buffer.data(), size);
+    fs.fclose(fd);
 }

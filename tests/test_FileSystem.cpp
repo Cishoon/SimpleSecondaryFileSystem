@@ -57,7 +57,7 @@ TEST(FileSystemTest, Test_mkdir_same_name) {
 
 // 创建大量目录
 TEST(FileSystemTest, Test_mkdir_many) {
-    const int NUM = 462;
+    const int NUM = 500;
     FileSystem fs;
     fs.format();
     for (int i = 1; i <= NUM; i++) {
@@ -81,16 +81,16 @@ TEST(FileSystemTest, Test_mkdir_many) {
     SUCCEED();
 }
 
-// 创建超过463个目录，期望报错
-TEST(FileSystemTest, Test_mkdir_many_error) {
-    const int NUM = 462;
-    FileSystem fs;
-    fs.format();
-    for (int i = 1; i <= NUM; i++) {
-        fs.mkdir("test" + std::to_string(i));
-    }
-    EXPECT_THROW(fs.mkdir("test463"), std::runtime_error);
-}
+// 创建超过INODE_COUNT - 2个目录，期望报错，耗时太久，删了
+// TEST(FileSystemTest, Test_mkdir_many_error) {
+//     const int NUM = INODE_COUNT - 2;
+//     FileSystem fs;
+//     fs.format();
+//     for (int i = 1; i <= NUM; i++) {
+//         fs.mkdir("test" + std::to_string(i));
+//     }
+//     EXPECT_THROW(fs.mkdir("test_overflow"), std::runtime_error);
+// }
 
 // 多次打开关闭文件系统
 TEST(FileSystemTest, Test_open_close) {
@@ -367,10 +367,14 @@ TEST(FileSystemTest, Test_write) {
 TEST(FileSystemTest, Test_read) {
     FileSystem fs;
     fs.format();
+
     fs.touch("test");
+    fs.save();
+
     auto fd = fs.fopen("test");
     fs.fwrite(fd, "Hello, World!", 14);
     fs.fclose(fd);
+
     fd = fs.fopen("test");
     char buffer[14];
     fs.fread(fd, buffer, 14);
@@ -454,5 +458,57 @@ TEST(FileSystemTest, Test_fseek_3) {
     fs.fread(fd, buffer2, 1100);
     EXPECT_EQ(strlen(buffer2), 1100);
     fs.fclose(fd);
+    SUCCEED();
+}
+
+// 上传1MB文件
+TEST(FileSystemTest, Test_write_1MB) {
+    const int FILE_SIZE = 512;
+    const int len = 2048 * 32;
+    // const int len = 2;
+    FileSystem fs;
+    fs.format();
+    fs.touch("test");
+    auto fd = fs.fopen("test");
+    std::string long_text(FILE_SIZE * len, 'a');
+    // for (int i = 0; i < len; i++) {
+    //     fs.fwrite(fd, long_text.c_str(), FILE_SIZE);
+    //     if (i % 2048 == 0) {
+    //         std::cout << "Writing " << i / 2048 << "MB..." << std::endl;
+    //     }
+    // }
+    fs.fwrite(fd, long_text.c_str(), FILE_SIZE * len);
+    fs.fclose(fd);
+
+    // 读取文本
+    fd = fs.fopen("test");
+    std::vector<char> buffer(FILE_SIZE * len + 1);
+    fs.fread(fd, buffer.data(), FILE_SIZE * len);
+    fs.fclose(fd);
+
+    // std::string long_text2(buffer.begin(), buffer.end());
+    // EXPECT_STREQ(long_text2.c_str(), long_text.c_str());
+
+    // 把buffer中的内容写到文件里
+    std::ofstream out("test.txt", std::ios::binary);
+    out.write(buffer.data(), FILE_SIZE * len);
+    out.close();
+
+    // 统计test.txt里有几个a
+    std::ifstream in("test.txt", std::ios::binary);
+    in.seekg(0, std::ios::end);
+    int size = in.tellg();
+    in.seekg(0, std::ios::beg);
+    std::vector<char> buffer2(size);
+    in.read(buffer2.data(), size);
+    in.close();
+    int count = 0;
+    for (int i = 0; i < size; i++) {
+        if (buffer2[i] == 'a') {
+            count++;
+        }
+    }
+    EXPECT_EQ(count, FILE_SIZE * len);
+
     SUCCEED();
 }

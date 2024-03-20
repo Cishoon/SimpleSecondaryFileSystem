@@ -54,7 +54,7 @@ public:
         m_inode.inode_id = inode_id;
         m_inode.reference_count = 0;
         m_inode.file_size = inode.file_size;
-        std::memcpy(m_inode.block_pointers, inode.block_pointers, sizeof inode.block_pointers);
+        memcpy(m_inode.block_pointers, inode.block_pointers, sizeof inode.block_pointers);
         return m_inode;
     }
 
@@ -62,7 +62,7 @@ public:
         DiskInode disk_inode;
         disk_inode.file_type = inode.file_type;
         disk_inode.file_size = inode.file_size;
-        std::memcpy(disk_inode.block_pointers, inode.block_pointers, sizeof inode.block_pointers);
+        memcpy(disk_inode.block_pointers, inode.block_pointers, sizeof inode.block_pointers);
         return disk_inode;
     }
 

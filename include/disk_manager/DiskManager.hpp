@@ -1,6 +1,7 @@
 #pragma once
 
 #include <fstream>
+#include <vector>
 
 #define BLOCK_SIZE (512) // 磁盘块大小
 

@@ -15,12 +15,14 @@ public:
     uint32_t reference_count = 0;
     uint32_t offset = 0;
     uint32_t inode_id = 0;
+    char file_name[28] {};
 
     File() = default;
     void clear() {
         reference_count = 0;
         offset = 0;
         inode_id = 0;
+        file_name[0] = '\0';
     }
 
     [[nodiscard]] bool is_busy() const {

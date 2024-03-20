@@ -3,6 +3,7 @@
 #include <list>
 #include <iostream>
 #include <sstream>
+#include <array>
 #include "SuperBlock.hpp"
 #include "DiskInode.hpp"
 #include "disk_manager/DiskManager.hpp"
@@ -20,7 +21,7 @@
 #endif
 
 #define MEMORY_INODE_NUM (100)  // 内存Inode数量
-#define OPEN_FILE_NUM (15)      // 同时打开文件数量上限
+#define OPEN_FILE_NUM (16)      // 同时打开文件数量上限
 
 #define CACHE_BLOCK_NUM (16)   // 高速缓存块数量
 
@@ -62,6 +63,10 @@ public:
 
     void save();
 
+
+    bool exist(const std::string &path);
+
+    uint32_t get_file_size(uint32_t i);
 
 private:
     /**
@@ -209,15 +214,17 @@ public:
 
     std::string cat(const std::string &file_name);
 
+    std::vector<std::pair<uint32_t, std::string>> flist();
+
 private:
     template<typename T>
-    void write_buffer(BufferCache *pCache, const T *value, const uint32_t &index, uint32_t size = 0, bool index_by_char = false);
+    void write_buffer(BufferCache *pCache, const T *value, const uint32_t &index, uint32_t size = 0,
+                      bool index_by_char = false);
 
 
     const uint32_t &get_parent_inode_id(Inode *pInode);
 
-    bool exist(const std::string &path);
-
     void free_memory_inode(Inode *pInode);
 
+    std::string get_pwd_by_inode(const uint32_t &inode_id);
 };

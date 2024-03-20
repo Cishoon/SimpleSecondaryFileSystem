@@ -66,4 +66,10 @@ private:
     void fwrite(const std::vector<std::string> &vector);
 
     void cat(const std::vector<std::string> &vector);
+
+    void flist();
+
+    void upload(const std::vector<std::string> &vector);
+
+    void download(const std::vector<std::string> &vector);
 };
