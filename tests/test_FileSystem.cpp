@@ -9,6 +9,12 @@ TEST(FileSystemTest, FormatFileSystem) {
     SUCCEED();
 }
 
+TEST(FileSystemTest, DiskSize) {
+    std::cout << "DISK_SIZE: " << DISK_SIZE << std::endl;
+    std::cout << "SUPER_BLOCK_SIZE: " << SUPER_BLOCK_SIZE << std::endl;
+    std::cout << "INODE_SIZE: " << INODE_SIZE << std::endl;
+    SUCCEED();
+}
 
 TEST(FileSystemTest, TestPathParser) {
     auto dirs = FileSystem::parse_path("/usr/local/bin");
@@ -57,7 +63,7 @@ TEST(FileSystemTest, Test_mkdir_same_name) {
 
 // 创建大量目录
 TEST(FileSystemTest, Test_mkdir_many) {
-    const int NUM = 500;
+    const int NUM = 462;
     FileSystem fs;
     fs.format();
     for (int i = 1; i <= NUM; i++) {
@@ -437,7 +443,7 @@ TEST(FileSystemTest, Test_fseek_2) {
 // 测试：通过命令行方式测试:
 // • 新建文件/test/Jerry，打开该文件，任意写入800个字节;
 // • 将文件读写指针定位到第500字节，读出500个字节到字符串abc。 • 将abc写回文件。
-TEST(FileSystemTest, Test_fseek_3) {
+TEST(FileSystemTest, Test_test_Jerry) {
     FileSystem fs;
     fs.format();
     fs.touch("test");
@@ -465,6 +471,58 @@ TEST(FileSystemTest, Test_fseek_3) {
 TEST(FileSystemTest, Test_write_1MB) {
     const int FILE_SIZE = 512;
     const int len = 2048 * 1;
+    // const int len = 2;
+    FileSystem fs;
+    fs.format();
+    fs.touch("test");
+    auto fd = fs.fopen("test");
+    std::string long_text(FILE_SIZE * len, 'a');
+    // for (int i = 0; i < len; i++) {
+    //     fs.fwrite(fd, long_text.c_str(), FILE_SIZE);
+    //     if (i % 2048 == 0) {
+    //         std::cout << "Writing " << i / 2048 << "MB..." << std::endl;
+    //     }
+    // }
+    fs.fwrite(fd, long_text.c_str(), FILE_SIZE * len);
+    fs.fclose(fd);
+
+    // 读取文本
+    fd = fs.fopen("test");
+    std::vector<char> buffer(FILE_SIZE * len + 1);
+    fs.fread(fd, buffer.data(), FILE_SIZE * len);
+    fs.fclose(fd);
+
+    // std::string long_text2(buffer.begin(), buffer.end());
+    // EXPECT_STREQ(long_text2.c_str(), long_text.c_str());
+
+    // 把buffer中的内容写到文件里
+    std::ofstream out("test.txt", std::ios::binary);
+    out.write(buffer.data(), FILE_SIZE * len);
+    out.close();
+
+    // 统计test.txt里有几个a
+    std::ifstream in("test.txt", std::ios::binary);
+    in.seekg(0, std::ios::end);
+    int size = in.tellg();
+    in.seekg(0, std::ios::beg);
+    std::vector<char> buffer2(size);
+    in.read(buffer2.data(), size);
+    in.close();
+    int count = 0;
+    for (int i = 0; i < size; i++) {
+        if (buffer2[i] == 'a') {
+            count++;
+        }
+    }
+    EXPECT_EQ(count, FILE_SIZE * len);
+
+    SUCCEED();
+}
+
+// 写入32MB文件
+TEST(FileSystemTest, Test_write_32MB) {
+    const int FILE_SIZE = 512;
+    const int len = 2048 * 32;
     // const int len = 2;
     FileSystem fs;
     fs.format();

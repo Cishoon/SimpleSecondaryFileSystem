@@ -5,6 +5,14 @@ set(CMAKE_CXX_STANDARD 17)
 
 include_directories(src include)
 
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_compile_options(-O2)
+elseif(MSVC)
+    add_compile_options(/O2)
+else()
+    message(STATUS "Unknown compiler, optimization flag -O2 might not be set properly.")
+endif()
+
 add_executable(FileSystem src/main.cpp
         src/shell/Shell.cpp
         include/shell/Shell.hpp

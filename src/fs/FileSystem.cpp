@@ -133,7 +133,7 @@ const uint32_t &FileSystem::get_block_pointer(Inode *pInode, uint32_t i) {
         // 三次间接索引
         i -= 5 + 2 * PTRS_PER_BLOCK + 2 * PTRS_PER_BLOCK * PTRS_PER_BLOCK;
         uint32_t block_no = pInode->block_pointers[9];
-        auto first_level_buffer = allocate_buffer_cache(block_no);
+        auto first_level_buffer =  allocate_buffer_cache(block_no);
         block_no = *first_level_buffer->read<uint32_t>((i / (PTRS_PER_BLOCK * PTRS_PER_BLOCK)) % PTRS_PER_BLOCK);
         auto second_level_buffer = allocate_buffer_cache(block_no);
         block_no = *second_level_buffer->read<uint32_t>((i / PTRS_PER_BLOCK) % PTRS_PER_BLOCK);
@@ -192,8 +192,10 @@ void FileSystem::alloc_new_block(Inode *inode) {
         uint32_t second_level_index = (new_block_num - 5) % PTRS_PER_BLOCK;
 
 
-        if (inode->block_pointers[5 + first_level_index] == 0) {
+        if (second_level_index == 0) {
             inode->block_pointers[5 + first_level_index] = super_block.get_free_block();
+            auto buffer = allocate_buffer_cache(inode->block_pointers[5 + first_level_index]);
+            buffer->clear_data();
         }
         auto buffer = allocate_buffer_cache(inode->block_pointers[5 + first_level_index]);
         auto id = super_block.get_free_block();
@@ -208,13 +210,17 @@ void FileSystem::alloc_new_block(Inode *inode) {
         uint32_t second_level_index = (new_block_num - 5 - 2 * PTRS_PER_BLOCK) / PTRS_PER_BLOCK % PTRS_PER_BLOCK;
         uint32_t third_level_index = (new_block_num - 5 - 2 * PTRS_PER_BLOCK) % PTRS_PER_BLOCK;
 
-        if (inode->block_pointers[7 + first_level_index] == 0) {
+        if (second_level_index == 0 && third_level_index == 0) {
             inode->block_pointers[7 + first_level_index] = super_block.get_free_block();
+            auto buffer = allocate_buffer_cache(inode->block_pointers[7 + first_level_index]);
+            buffer->clear_data();
         }
         auto first_level_buffer = allocate_buffer_cache(inode->block_pointers[7 + first_level_index]);
-        if (*first_level_buffer->read<uint32_t>(second_level_index) == 0) {
+        if (third_level_index == 0) {
             auto id = super_block.get_free_block();
             write_buffer(first_level_buffer, &id, second_level_index);
+            auto buffer = allocate_buffer_cache(id);
+            buffer->clear_data();
         }
         auto second_level_buffer = allocate_buffer_cache(*first_level_buffer->read<uint32_t>(second_level_index));
         auto id = super_block.get_free_block();
@@ -239,22 +245,28 @@ void FileSystem::alloc_new_block(Inode *inode) {
                                       PTRS_PER_BLOCK;
 
         // 检查一级索引块是否已分配
-        if (inode->block_pointers[9] == 0) {
+        if (second_level_index == 0 && third_level_index == 0 && fourth_level_index == 0) {
             inode->block_pointers[9] = super_block.get_free_block();
+            auto buffer = allocate_buffer_cache(inode->block_pointers[9]);
+            buffer->clear_data();
         }
         auto first_level_buffer = allocate_buffer_cache(inode->block_pointers[9]);
 
         // 检查二级索引块是否已分配
-        if (*first_level_buffer->read<uint32_t>(second_level_index) == 0) {
+        if (third_level_index == 0 && fourth_level_index == 0) {
             auto id = super_block.get_free_block();
             write_buffer(first_level_buffer, &id, second_level_index);
+            auto buffer = allocate_buffer_cache(id);
+            buffer->clear_data();
         }
         auto second_level_buffer = allocate_buffer_cache(*first_level_buffer->read<uint32_t>(second_level_index));
 
         // 检查三级索引块是否已分配
-        if (*second_level_buffer->read<uint32_t>(third_level_index) == 0) {
+        if (fourth_level_index == 0) {
             auto id = super_block.get_free_block();
             write_buffer(second_level_buffer, &id, third_level_index);
+            auto buffer = allocate_buffer_cache(id);
+            buffer->clear_data();
         }
         auto third_level_buffer = allocate_buffer_cache(*second_level_buffer->read<uint32_t>(third_level_index));
 
@@ -265,13 +277,18 @@ void FileSystem::alloc_new_block(Inode *inode) {
     }
 
     throw std::runtime_error("File too large");
-    return;
+}
+
+void FileSystem::free_all_data_block(Inode *inode) {
+    static const uint32_t PTRS_PER_BLOCK = BLOCK_SIZE / sizeof(uint32_t); // 每个块可以包含的指针数量
 
     // Inode 有一个 uint32_t block_pointers[10]
     // 直接索引
     for (int i = 0; i < 5; i++) {
-        if (inode->block_pointers[i] == 0) {
-            inode->block_pointers[i] = super_block.get_free_block();
+        if (inode->block_pointers[i] != 0) {
+            // inode->block_pointers[i] = super_block.get_free_block();
+            super_block.block_bitmap.reset(inode->block_pointers[i] - BLOCK_START_INDEX);
+        } else {
             return;
         }
     }
@@ -279,92 +296,109 @@ void FileSystem::alloc_new_block(Inode *inode) {
     // 一次间接索引
     for (int i = 5; i < 7; i++) {
         if (inode->block_pointers[i] == 0) {
-            inode->block_pointers[i] = super_block.get_free_block();
-            auto buffer = allocate_buffer_cache(inode->block_pointers[i]);
-            auto ptr = buffer->read<uint32_t>(0);
-            for (int j = 0; j < PTRS_PER_BLOCK; j++) {
-                if (ptr[j] == 0) {
-                    auto id = super_block.get_free_block();
-                    write_buffer(buffer, &id, j);
-                    return;
-                }
-            }
+            return;
         } else {
-            auto buffer = allocate_buffer_cache(inode->block_pointers[i]);
-            auto ptr = buffer->read<uint32_t>(0);
+            auto buffer = *allocate_buffer_cache(inode->block_pointers[i]);
+            auto ptr = buffer.read<uint32_t>(0);
             for (int j = 0; j < PTRS_PER_BLOCK; j++) {
                 if (ptr[j] == 0) {
-                    auto id = super_block.get_free_block();
-                    write_buffer(buffer, &id, j);
+                    // auto id = super_block.get_free_block();
+                    // write_buffer(buffer, &id, j);
+                    super_block.block_bitmap.reset(inode->block_pointers[i] - BLOCK_START_INDEX);
                     return;
+                } else {
+                    super_block.block_bitmap.reset(ptr[j] - BLOCK_START_INDEX);
                 }
             }
+            super_block.block_bitmap.reset(inode->block_pointers[i] - BLOCK_START_INDEX);
         }
     }
 
     // 二次间接索引
     for (int i = 7; i < 9; i++) {
         if (inode->block_pointers[i] == 0) { // 如果二次间接索引还未分配
-            inode->block_pointers[i] = super_block.get_free_block();
+            // inode->block_pointers[i] = super_block.get_free_block();
+            return;
         }
-        auto first_level_buffer = allocate_buffer_cache(inode->block_pointers[i]);
-        auto first_level_ptr = first_level_buffer->read<uint32_t>(0);
+        auto first_level_buffer = *allocate_buffer_cache(inode->block_pointers[i]);
+        auto first_level_ptr = first_level_buffer.read<uint32_t>(0);
         for (int j = 0; j < PTRS_PER_BLOCK; j++) {
             if (first_level_ptr[j] == 0) { // 如果一级间接索引块中的指针未分配
-                auto id = super_block.get_free_block();
-                write_buffer(first_level_buffer, &id, j);
-                auto second_level_buffer = allocate_buffer_cache(first_level_ptr[j]);
-                auto id2 = super_block.get_free_block();
-                write_buffer(second_level_buffer, &id2, 0);
+                // auto id = super_block.get_free_block();
+                // write_buffer(first_level_buffer, &id, j);
+                // auto second_level_buffer = allocate_buffer_cache(first_level_ptr[j]);
+                // auto id2 = super_block.get_free_block();
+                // write_buffer(second_level_buffer, &id2, 0);
+                super_block.block_bitmap.reset(inode->block_pointers[i] - BLOCK_START_INDEX);
                 return;
             } else {
-                auto second_level_buffer = allocate_buffer_cache(first_level_ptr[j]);
-                auto second_level_ptr = second_level_buffer->read<uint32_t>(0);
+                auto second_level_buffer = *allocate_buffer_cache(first_level_ptr[j]);
+                auto second_level_ptr = second_level_buffer.read<uint32_t>(0);
                 for (int k = 0; k < PTRS_PER_BLOCK; k++) {
                     if (second_level_ptr[k] == 0) { // 如果二级间接索引块中的指针未分配
-                        auto id = super_block.get_free_block();
-                        write_buffer(second_level_buffer, &id, k);
+                        // auto id = super_block.get_free_block();
+                        // write_buffer(second_level_buffer, &id, k);
+                        super_block.block_bitmap.reset(first_level_ptr[j] - BLOCK_START_INDEX);
+                        super_block.block_bitmap.reset(inode->block_pointers[i] - BLOCK_START_INDEX);
                         return;
+                    } else {
+                        super_block.block_bitmap.reset(second_level_ptr[k] - BLOCK_START_INDEX);
                     }
                 }
+                super_block.block_bitmap.reset(first_level_ptr[j] - BLOCK_START_INDEX);
             }
         }
+        super_block.block_bitmap.reset(inode->block_pointers[i] - BLOCK_START_INDEX);
     }
 
     // 三次间接索引
     if (inode->block_pointers[9] == 0) { // 如果三次间接索引还未分配
-        inode->block_pointers[9] = super_block.get_free_block();
+        // inode->block_pointers[9] = super_block.get_free_block();
+        return;
     }
-    auto first_level_buffer = allocate_buffer_cache(inode->block_pointers[9]);
-    auto first_level_ptr = first_level_buffer->read<uint32_t>(0);
+    auto first_level_buffer = *allocate_buffer_cache(inode->block_pointers[9]);
+    auto first_level_ptr = first_level_buffer.read<uint32_t>(0);
     for (int i = 0; i < PTRS_PER_BLOCK; i++) {
         if (first_level_ptr[i] == 0) {
-            auto id = super_block.get_free_block();
-            write_buffer(first_level_buffer, &id, i);
+            // auto id = super_block.get_free_block();
+            // write_buffer(first_level_buffer, &id, i);
+            super_block.block_bitmap.reset(inode->block_pointers[9] - BLOCK_START_INDEX);
+            return;
         }
-        auto second_level_buffer = allocate_buffer_cache(first_level_ptr[i]);
-        auto second_level_ptr = second_level_buffer->read<uint32_t>(0);
+        auto second_level_buffer = *allocate_buffer_cache(first_level_ptr[i]);
+        auto second_level_ptr = second_level_buffer.read<uint32_t>(0);
         for (int j = 0; j < PTRS_PER_BLOCK; j++) {
             if (second_level_ptr[j] == 0) {
-                auto id = super_block.get_free_block();
-                write_buffer(second_level_buffer, &id, j);
-                auto third_level_buffer = allocate_buffer_cache(second_level_ptr[j]);
-                auto id2 = super_block.get_free_block();
-                write_buffer(third_level_buffer, &id2, 0);
+                // auto id = super_block.get_free_block();
+                // write_buffer(second_level_buffer, &id, j);
+                // auto third_level_buffer = allocate_buffer_cache(second_level_ptr[j]);
+                // auto id2 = super_block.get_free_block();
+                // write_buffer(third_level_buffer, &id2, 0);
+                // return;
+                super_block.block_bitmap.reset(first_level_ptr[i] - BLOCK_START_INDEX);
+                super_block.block_bitmap.reset(inode->block_pointers[9] - BLOCK_START_INDEX);
                 return;
             } else {
-                auto third_level_buffer = allocate_buffer_cache(second_level_ptr[j]);
-                auto third_level_ptr = third_level_buffer->read<uint32_t>(0);
+                auto third_level_buffer = *allocate_buffer_cache(second_level_ptr[j]);
+                auto third_level_ptr = third_level_buffer.read<uint32_t>(0);
                 for (int k = 0; k < PTRS_PER_BLOCK; k++) {
                     if (third_level_ptr[k] == 0) {
-                        auto id = super_block.get_free_block();
-                        write_buffer(third_level_buffer, &id, k);
+                        // auto id = super_block.get_free_block();
+                        // write_buffer(third_level_buffer, &id, k);
+                        super_block.block_bitmap.reset(first_level_ptr[i] - BLOCK_START_INDEX);
+                        super_block.block_bitmap.reset(second_level_ptr[j] - BLOCK_START_INDEX);
+                        super_block.block_bitmap.reset(inode->block_pointers[9] - BLOCK_START_INDEX);
                         return;
+                    } else {
+                        super_block.block_bitmap.reset(third_level_ptr[k] - BLOCK_START_INDEX);
                     }
                 }
+                super_block.block_bitmap.reset(second_level_ptr[j] - BLOCK_START_INDEX);
             }
         }
+        super_block.block_bitmap.reset(first_level_ptr[i] - BLOCK_START_INDEX);
     }
+    super_block.block_bitmap.reset(inode->block_pointers[9] - BLOCK_START_INDEX);
 }
 
 void FileSystem::write_back_cache_block(BufferCache *pCache) {
@@ -710,6 +744,7 @@ void FileSystem::rm(const std::string &dir_name) {
             if (inode->is_directory() && inode->get_directory_num() > 2) {
                 throw std::runtime_error("Directory not empty: " + dir_name);
             }
+
             // set_directory_entry(dir_inode, i, 0, "");
             // 把当前文件夹下的最后一个目录覆盖到这个位置
             auto last_entry = get_directory_entry(dir_inode, dir_inode->get_directory_num() - 1);
@@ -717,6 +752,7 @@ void FileSystem::rm(const std::string &dir_name) {
             set_directory_entry(dir_inode, dir_inode->get_directory_num() - 1, 0, ""); // TODO 可以删去这一行，保留为了测试的时候好看
             dir_inode->file_size -= sizeof(DirectoryEntry);
             free_memory_inode(inode);
+
             return;
         }
     }
@@ -782,14 +818,16 @@ void FileSystem::free_memory_inode(Inode *pInode) {
 
     // 释放Inode
     super_block.inode_bitmap.reset(pInode->inode_id);
-
     // 释放Inode指向的所有数据块
-    for (int i = 0; i < (pInode->file_size / BLOCK_SIZE) + 1; i++) {
-        auto block_no = get_block_pointer(pInode, i);
-        if (block_no >= BLOCK_START_INDEX) {
-            super_block.block_bitmap.reset(block_no - BLOCK_START_INDEX);
-        }
-    }
+    free_all_data_block(pInode);
+    pInode->clear();
+    write_back_inode(pInode);
+    // for (int i = 0; i < (pInode->file_size / BLOCK_SIZE) + 1; i++) {
+    //     auto block_no = get_block_pointer(pInode, i);
+    //     if (block_no >= BLOCK_START_INDEX) {
+    //         super_block.block_bitmap.reset(block_no - BLOCK_START_INDEX);
+    //     }
+    // }
 }
 
 void FileSystem::save() {
@@ -882,7 +920,8 @@ void FileSystem::fwrite(const uint32_t &file_id, const char *data, const uint32_
     }
 }
 
-void FileSystem::fwrite(const uint32_t &file_id, const char *data, const uint32_t &size, const ProgressCallback& callback) {
+void
+FileSystem::fwrite(const uint32_t &file_id, const char *data, const uint32_t &size, const ProgressCallback &callback) {
     auto &open_file = open_files[file_id];
     if (!open_file.is_busy()) {
         throw std::runtime_error("File not opened: " + std::to_string(file_id));
@@ -950,7 +989,7 @@ void FileSystem::fread(const uint32_t &file_id, char *data, const uint32_t &size
     }
 }
 
-void FileSystem::fread(const uint32_t &file_id, char *data, const uint32_t &size, const ProgressCallback& callback) {
+void FileSystem::fread(const uint32_t &file_id, char *data, const uint32_t &size, const ProgressCallback &callback) {
     auto &open_file = open_files[file_id];
     if (!open_file.is_busy()) {
         throw std::runtime_error("File not opened: " + std::to_string(file_id));
@@ -980,11 +1019,11 @@ void FileSystem::fread(const uint32_t &file_id, char *data, const uint32_t &size
         open_file.offset = ptr;
 
         if (times++ == 5000) {
-            callback((ptr-offset), size); // 调用回调函数
+            callback((ptr - offset), size); // 调用回调函数
             times = 0;
         }
     }
-    callback((ptr-offset), size);
+    callback((ptr - offset), size);
 }
 
 void FileSystem::fseek(const uint32_t &file_id, const uint32_t &offset) {

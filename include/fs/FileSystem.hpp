@@ -16,11 +16,10 @@
 
 #ifdef RUNNING_TESTS
 #define DISK_PATH "disk_dev.img"
-#define DISK_SIZE (1LL << 30)
 #else
 #define DISK_PATH "disk.img"
-#define DISK_SIZE (1LL << 30)
 #endif
+#define DISK_SIZE ((SUPER_BLOCK_SIZE + INODE_SIZE + BLOCK_COUNT) * BLOCK_SIZE)
 
 #define MEMORY_INODE_NUM (100)  // 内存Inode数量
 #define OPEN_FILE_NUM (16)      // 同时打开文件数量上限
@@ -236,4 +235,5 @@ private:
 
     std::string get_pwd_by_inode(const uint32_t &inode_id);
 
+    void free_all_data_block(Inode *inode);
 };

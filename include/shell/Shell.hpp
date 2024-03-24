@@ -31,7 +31,7 @@ public:
 
     void run();
 
-private:
+public:
     std::map<std::string, Command> commands;
     bool is_active = true;
 

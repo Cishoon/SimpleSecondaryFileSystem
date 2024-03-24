@@ -4,16 +4,15 @@
 #include <ctime>
 #include <bitset>
 
-// 磁盘Inode数量，#2~#59，共58个扇区，每个扇区包含8个Inode，共464个Inode
-#define INODE_COUNT (3968)
-// 磁盘Block数量，2097092个扇区
-#define BLOCK_COUNT (2097092)
+#define INODE_COUNT (3968) // 几个inode块，用于bitset
+#define BLOCK_COUNT (2097152) // 几个数据块，用于bitset
 
-#define SUPER_BLOCK_SIZE (513)
-#define INODE_SIZE (496)
+#define INODE_SIZE (INODE_COUNT / 8) // INODE扇区数量，8个inode块一个扇区
 
-#define INODE_START_INDEX (SUPER_BLOCK_SIZE)
-#define BLOCK_START_INDEX (SUPER_BLOCK_SIZE + INODE_SIZE)
+#define SUPER_BLOCK_SIZE ((16 + INODE_COUNT / 8 + BLOCK_COUNT / 8) / 512) // SUPER_BLOCK扇区数量
+
+#define INODE_START_INDEX (SUPER_BLOCK_SIZE) // INODE起始扇区
+#define BLOCK_START_INDEX (SUPER_BLOCK_SIZE + INODE_SIZE)   // 数据块起始扇区
 
 
 class SuperBlock {
@@ -25,32 +24,31 @@ public:
 
     // 脏标志
     uint32_t dirty_flag;
-    // 最后一次更新时间
-    uint32_t last_update_time;
 
-    std::bitset<INODE_COUNT> inode_bitmap; // 分配64字节
-    // 8 + 8 + 64 = 80 512 - 80 = 432 432 / 4 = 108
-    // uint32_t padding[108]{}; // 填充到512字节
+    // 记录block_bitmap上次分配到哪个位置，加速get_free_block
+    uint32_t last_i;
 
-    std::bitset<BLOCK_COUNT> block_bitmap; // 分配256K字节
+    std::bitset<INODE_COUNT> inode_bitmap;
+
+    std::bitset<BLOCK_COUNT> block_bitmap;
+
 
 public:
     SuperBlock() {
         block_count = BLOCK_COUNT;
         inode_count = INODE_COUNT;
         dirty_flag = 0;
-        last_update_time = static_cast<uint32_t>(time(nullptr));
+        last_i = 0;
     }
 
     void format() {
         block_count = BLOCK_COUNT;
         inode_count = INODE_COUNT;
-        last_update_time = static_cast<uint32_t>(time(nullptr));
         dirty_flag = 1; // 格式化后需要写回磁盘，所以设置脏标志
 
         inode_bitmap.reset();
         block_bitmap.reset();
-
+        last_i = 0;
     }
 
     // 获取空闲Inode
@@ -69,20 +67,31 @@ public:
 
     // 获取空闲Block
     uint32_t get_free_block() {
-        static uint32_t last_i = 0;
         // 从位图中找到第一个空闲的Block
-        for (uint32_t i = last_i; i < block_count; i++) {
+        // for (uint32_t i = last_i; i < block_count; i++) {
+        //     if (!block_bitmap.test(i)) {
+        //         block_bitmap.set(i);
+        //         dirty_flag = 1;
+        //         last_i = (i + 1) % block_count;
+        //         return i + BLOCK_START_INDEX;
+        //     }
+        //
+        //     if (i + 1 == last_i) {
+        //         break;
+        //     }
+        // }
+        uint32_t i = last_i;
+        do {
+            if (i == 0) ++i;
             if (!block_bitmap.test(i)) {
                 block_bitmap.set(i);
                 dirty_flag = 1;
                 last_i = (i + 1) % block_count;
                 return i + BLOCK_START_INDEX;
             }
+            i = (i + 1) % block_count;
+        } while (i != last_i);
 
-            if (i == last_i) {
-                break;
-            }
-        }
         // 如果没有空闲Block
         throw std::runtime_error("No free block");
     }
@@ -110,5 +119,9 @@ public:
         }
         // 如果没有连续的空闲Block
         throw std::runtime_error("No free blocks");
+    }
+
+    [[nodiscard]] inline bool check_block_bit(const uint32_t &p) const {
+        return p != 0 && block_bitmap.test(p - BLOCK_START_INDEX);
     }
 };

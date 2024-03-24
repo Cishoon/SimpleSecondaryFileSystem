@@ -27,6 +27,10 @@ public:
         std::memset(data, 0, BLOCK_SIZE);
     }
 
+    void clear_data() {
+        std::memset(data, 0, BLOCK_SIZE);
+    }
+
     /**
      * 读取数据
      * @tparam T
